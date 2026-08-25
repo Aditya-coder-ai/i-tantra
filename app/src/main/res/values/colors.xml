@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="recording_red">#B3261E</color>
+    <color name="recording_green">#146C2E</color>
+    <color name="vad_speaking">#1B873F</color>
+    <color name="vad_silence">#6B778C</color>
+    <color name="primary_blue">#0C66E4</color>
+</resources>

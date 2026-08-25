@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceLink</string>
+    <string name="status_idle">Idle — microphone is not active</string>
+    <string name="status_recording">Recording — microphone is active</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="start_recording">Start recording</string>
+    <string name="stop_recording">Stop recording</string>
+    <string name="run_microphone_test">Run 5-second microphone test</string>
+    <string name="vad_status_silence">VAD: Silence</string>
+    <string name="vad_status_speaking">VAD: Voice Detected (Speaking)</string>
+    <string name="vad_segments_header">Captured Speech Utterances</string>
+    <string name="vad_no_segments">No speech segments captured yet. Speak to trigger VAD.</string>
+    <string name="error_mic_inactive">Error — microphone is not active</string>
+</resources>

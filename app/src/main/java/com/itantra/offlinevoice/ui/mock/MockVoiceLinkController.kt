@@ -3,6 +3,16 @@ package com.itantra.offlinevoice.ui.mock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.itantra.offlinevoice.audio.stt.STTLanguage
+import com.itantra.offlinevoice.audio.stt.STTResult
+import com.itantra.offlinevoice.audio.stt.VoskSttEngine
+import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Preview-only state. Replace this controller with real feature adapters in later milestones. */
 enum class CommunicationState { IDLE, LISTENING, PROCESSING, SENDING, RECEIVED }
@@ -44,12 +54,46 @@ private val demoDevices = listOf(
     NearbyDevice("Field Unit 12", "Wi‑Fi Direct · 58% signal", 2)
 )
 
-class MockVoiceLinkController {
+class MockVoiceLinkController(context: Context) {
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val sttEngine = VoskSttEngine(context)
+    
     var ui by mutableStateOf(VoiceLinkUiState())
         private set
 
     fun startTalking() = update { copy(communicationState = CommunicationState.LISTENING, lastMessage = "Listening locally…") }
-    fun releaseToProcess() = update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Converting speech…") }
+    
+    fun processSpeech(samples: ShortArray) {
+        update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Converting speech…") }
+        scope.launch(Dispatchers.Default) {
+            val language = STTLanguage.fromCode(ui.language.substringBefore(' ').lowercase())
+            sttEngine.initialize(language)
+            val result = sttEngine.transcribe(samples)
+            
+            launch(Dispatchers.Main) {
+                update { 
+                    copy(
+                        communicationState = CommunicationState.SENDING,
+                        lastMessage = "Transcription: ${result.text}",
+                        messages = messages + VoiceMessage(
+                            id = messages.size + 1,
+                            text = result.text.ifBlank { "(No speech detected)" },
+                            isMine = true,
+                            language = language.displayName,
+                            time = "Now",
+                            delivered = false
+                        )
+                    )
+                }
+                delay(1000)
+                setSending()
+                delay(800)
+                markDelivered()
+            }
+        }
+    }
+
+    fun releaseToProcess() = update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Finalizing audio…") }
     fun setSending() = update { copy(communicationState = CommunicationState.SENDING, lastMessage = "Sending lightweight text…") }
     fun markDelivered() = update {
         copy(

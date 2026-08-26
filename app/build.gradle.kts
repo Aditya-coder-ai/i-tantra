@@ -28,6 +28,10 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -42,6 +46,10 @@ dependencies {
 
     // Offline STT - Vosk
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // Offline TTS - ONNX Runtime & Coroutines
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

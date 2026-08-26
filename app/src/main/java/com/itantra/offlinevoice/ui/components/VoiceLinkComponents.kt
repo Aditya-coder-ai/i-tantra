@@ -1,0 +1,258 @@
+package com.itantra.offlinevoice.ui.components
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.itantra.offlinevoice.ui.mock.CommunicationState
+import com.itantra.offlinevoice.ui.mock.NearbyDevice
+import com.itantra.offlinevoice.ui.mock.VoiceMessage
+import com.itantra.offlinevoice.ui.theme.Blue
+import com.itantra.offlinevoice.ui.theme.Emergency
+import com.itantra.offlinevoice.ui.theme.EmergencySurface
+import com.itantra.offlinevoice.ui.theme.Line
+import com.itantra.offlinevoice.ui.theme.Success
+
+val ScreenPadding = 20.dp
+val CardRadius = 20.dp
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VoiceLinkTopBar(title: String, onBack: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
+    TopAppBar(
+        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
+        navigationIcon = {
+            if (onBack != null) IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Go back")
+            }
+        },
+        actions = { trailing?.invoke() },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+    )
+}
+
+@Composable
+fun StatusPill(label: String, modifier: Modifier = Modifier, active: Boolean = true) {
+    val color = if (active) Success else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = modifier.clip(RoundedCornerShape(100.dp)).background(color.copy(alpha = .11f)).padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(8.dp).background(color, CircleShape))
+        Spacer(Modifier.width(7.dp))
+        Text(label, color = color, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun PrimaryButton(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    ElevatedButton(onClick = onClick, enabled = enabled, modifier = modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun OutlineButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun InfoCard(title: String, body: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Card(
+        modifier = modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        shape = RoundedCornerShape(CardRadius),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(5.dp))
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun SectionLabel(text: String) {
+    Text(text.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+fun VoiceActivity(active: Boolean, modifier: Modifier = Modifier) {
+    val bars = if (active) listOf(.35f, .65f, .95f, .55f, .8f, .42f, .72f, .5f, .9f) else listOf(.18f, .23f, .15f, .2f, .14f, .2f, .16f, .22f, .17f)
+    Canvas(modifier = modifier.height(45.dp).fillMaxWidth()) {
+        val gap = size.width / (bars.size * 2f)
+        bars.forEachIndexed { index, amount ->
+            val barHeight = size.height * amount
+            drawRoundRect(
+                color = if (active) Blue else Line,
+                topLeft = androidx.compose.ui.geometry.Offset((index * gap * 2 + gap / 2), (size.height - barHeight) / 2),
+                size = androidx.compose.ui.geometry.Size(gap, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(gap / 2)
+            )
+        }
+    }
+}
+
+@Composable
+fun PushToTalkButton(state: CommunicationState, onHold: () -> Unit, onRelease: () -> Unit) {
+    val isListening = state == CommunicationState.LISTENING
+    val color = if (isListening) Emergency else Blue
+    val message = when (state) {
+        CommunicationState.LISTENING -> "LISTENING…"
+        CommunicationState.PROCESSING -> "PROCESSING"
+        CommunicationState.SENDING -> "SENDING"
+        CommunicationState.RECEIVED -> "DELIVERED"
+        CommunicationState.IDLE -> "HOLD\nTO TALK"
+    }
+    Box(
+        modifier = Modifier
+            .size(238.dp)
+            .clip(CircleShape)
+            .background(color.copy(alpha = .13f))
+            .padding(12.dp)
+            .border(2.dp, color.copy(alpha = .22f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(CircleShape)
+                .background(color)
+                .pointerInput(state) {
+                    detectTapGestures(onPress = {
+                        if (state == CommunicationState.IDLE || state == CommunicationState.RECEIVED) {
+                            onHold()
+                            tryAwaitRelease()
+                            onRelease()
+                        }
+                    })
+                }
+                .semantics { contentDescription = "Hold to talk. Current state: ${state.name.lowercase()}" },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color.White, modifier = Modifier.size(44.dp))
+                Spacer(Modifier.height(9.dp))
+                Text(message, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+fun ProcessingSteps(state: CommunicationState) {
+    val steps = listOf("Listening", "Converting speech", "Sending", "Delivered")
+    val activeIndex = when (state) {
+        CommunicationState.LISTENING -> 0
+        CommunicationState.PROCESSING -> 1
+        CommunicationState.SENDING -> 2
+        CommunicationState.RECEIVED -> 3
+        CommunicationState.IDLE -> -1
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        steps.forEachIndexed { index, step ->
+            val reached = index <= activeIndex
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+                Box(Modifier.size(26.dp).background(if (reached) Blue else Line, CircleShape), contentAlignment = Alignment.Center) {
+                    if (reached) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    else Text("${index + 1}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(step, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+fun MessageBubble(message: VoiceMessage) {
+    val surface = when {
+        message.emergency -> EmergencySurface
+        message.isMine -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surface
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start
+    ) {
+        if (message.emergency) Text("EMERGENCY", color = Emergency, style = MaterialTheme.typography.labelLarge)
+        Card(
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = surface),
+            modifier = Modifier.fillMaxWidth(.84f)
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text(if (message.isMine) "YOU · ${message.language}" else "REMOTE · ${message.language}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                Text("“${message.text}”", style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, "Replay message", modifier = Modifier.size(17.dp), tint = Blue)
+                    Spacer(Modifier.width(4.dp))
+                    Text("${message.time}${if (message.delivered && message.isMine) "  ✓✓" else ""}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceCard(device: NearbyDevice, actionLabel: String, onAction: () -> Unit) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.GraphicEq, null, tint = Blue)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(device.name, style = MaterialTheme.typography.titleMedium)
+                Text("${"▂▅▇█".take(device.signal)}  ${device.detail}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedButton(onClick = onAction, shape = RoundedCornerShape(12.dp)) { Text(actionLabel) }
+        }
+    }
+}

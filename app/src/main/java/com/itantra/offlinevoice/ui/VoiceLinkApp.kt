@@ -54,14 +54,14 @@ fun VoiceLinkApp() {
         composable(Route.Splash) { SplashScreen { navController.navigate(Route.Onboarding) { popUpTo(Route.Splash) { inclusive = true } } } }
         composable(Route.Onboarding) { OnboardingScreen { navController.navigate(Route.Home) { popUpTo(Route.Onboarding) { inclusive = true } } } }
         composable(Route.Home) { HomeScreen(controller) { navController.navigate(it) } }
-        composable(Route.Conversation) { ConversationScreen(controller.ui) { navController.popBackStack() } }
+        composable(Route.Conversation) { ConversationScreen(controller) { navController.popBackStack() } }
         composable(Route.Language) { LanguageScreen(controller.ui.language, controller::chooseLanguage) { navController.popBackStack() } }
         composable(Route.Connection) { ConnectionScreen(controller, { navController.navigate(it) }) { navController.popBackStack() } }
-        composable(Route.Pairing) { PairingScreen(controller.ui, controller::connect) { navController.popBackStack() } }
-        composable(Route.Emergency) { EmergencyScreen({ navController.navigate(it) }) { navController.popBackStack() } }
-        composable(Route.IncomingEmergency) { EmergencyAlertScreen { navController.popBackStack() } }
+        composable(Route.Pairing) { PairingScreen(controller) { navController.popBackStack() } }
+        composable(Route.Emergency) { EmergencyScreen(controller, { navController.navigate(it) }) { navController.popBackStack() } }
+        composable(Route.IncomingEmergency) { EmergencyAlertScreen(controller) { navController.popBackStack() } }
         composable(Route.Settings) { SettingsScreen(controller, { navController.navigate(it) }) { navController.popBackStack() } }
-        composable(Route.SystemStatus) { SystemStatusScreen { navController.popBackStack() } }
+        composable(Route.SystemStatus) { SystemStatusScreen(controller) { navController.popBackStack() } }
         composable(Route.About) { AboutScreen { navController.popBackStack() } }
         composable(Route.TextProcessingDebug) { TextProcessingDebugScreen { navController.popBackStack() } }
         composable(Route.SecurityStatus) { SecurityStatusScreen(securityController, { navController.navigate(it) }) { navController.popBackStack() } }

@@ -13,10 +13,9 @@ import com.itantra.offlinevoice.audio.stt.STTResult
  */
 class TextProcessor(
     private val cleaner: TextCleaner = TextCleaner(),
-    private val segmenter: SentenceSegmenter = SentenceSegmenter(),
     private val classifier: MessageClassifier = MessageClassifier(),
     private val deduplicator: MessageDeduplicator = MessageDeduplicator(),
-    private val builder: MessageBuilder = MessageBuilder()
+    private val builder: MessageBuilder = MessageBuilder(),
 ) {
 
     /**
@@ -32,7 +31,7 @@ class TextProcessor(
         sttResult: STTResult,
         conversationId: String,
         senderId: String,
-        userConfirmedEmergency: Boolean = false
+        userConfirmedEmergency: Boolean = false,
     ): TextProcessingResult {
         val startNanos = System.nanoTime()
 

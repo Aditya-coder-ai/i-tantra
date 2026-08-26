@@ -57,6 +57,6 @@ class SentenceSegmenter {
     private companion object {
         // Split after sentence-ending punctuation followed by whitespace.
         // Uses lookbehind to keep the punctuation attached to the preceding sentence.
-        val SENTENCE_BOUNDARY = Regex("(?<=[.!?।॥\u0964])(\\s+)")
+        val SENTENCE_BOUNDARY = Regex("(?<=[.!?।॥])(\\s+)")
     }
 }

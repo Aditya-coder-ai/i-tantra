@@ -1,9 +1,10 @@
 package com.itantra.offlinevoice.text
 
 import java.nio.charset.StandardCharsets
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -28,8 +29,11 @@ object MessageIdentity {
      * Returns the current UTC timestamp in ISO-8601 format.
      * Stored internally in UTC to avoid timezone ambiguity.
      */
-    fun utcTimestamp(): String =
-        DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+    fun utcTimestamp(): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        return sdf.format(Date())
+    }
 
     /**
      * Returns the next monotonically increasing sequence number.

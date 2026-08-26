@@ -38,7 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,12 +62,14 @@ fun VoiceLinkTopBar(title: String, onBack: (() -> Unit)? = null, trailing: @Comp
     TopAppBar(
         title = { Text(title, style = MaterialTheme.typography.titleLarge) },
         navigationIcon = {
-            if (onBack != null) IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Go back")
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Go back")
+                }
             }
         },
         actions = { trailing?.invoke() },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
     )
 }
 
@@ -129,7 +130,7 @@ fun VoiceActivity(active: Boolean, modifier: Modifier = Modifier) {
             val barHeight = size.height * amount
             drawRoundRect(
                 color = if (active) Blue else Line,
-                topLeft = androidx.compose.ui.geometry.Offset((index * gap * 2 + gap / 2), (size.height - barHeight) / 2),
+                topLeft = androidx.compose.ui.geometry.Offset(((index * gap * 2) + (gap / 2)), (size.height - barHeight) / 2),
                 size = androidx.compose.ui.geometry.Size(gap, barHeight),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(gap / 2)
             )
@@ -166,8 +167,11 @@ fun PushToTalkButton(state: CommunicationState, onHold: () -> Unit, onRelease: (
                     detectTapGestures(onPress = {
                         if (state == CommunicationState.IDLE || state == CommunicationState.RECEIVED) {
                             onHold()
-                            tryAwaitRelease()
-                            onRelease()
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                onRelease()
+                            }
                         }
                     })
                 }
@@ -199,7 +203,7 @@ fun ProcessingSteps(state: CommunicationState) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
                 Box(Modifier.size(26.dp).background(if (reached) Blue else Line, CircleShape), contentAlignment = Alignment.Center) {
                     if (reached) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    else Text("${index + 1}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else Text(text = (index + 1).toString(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(step, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
@@ -209,7 +213,7 @@ fun ProcessingSteps(state: CommunicationState) {
 }
 
 @Composable
-fun MessageBubble(message: VoiceMessage) {
+fun MessageBubble(message: VoiceMessage, onPlayAudio: (() -> Unit)? = null) {
     val surface = when {
         message.emergency -> EmergencySurface
         message.isMine -> MaterialTheme.colorScheme.primaryContainer
@@ -219,21 +223,45 @@ fun MessageBubble(message: VoiceMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start
     ) {
-        if (message.emergency) Text("EMERGENCY", color = Emergency, style = MaterialTheme.typography.labelLarge)
+        if (message.emergency) Text("EMERGENCY ALERT", color = Emergency, style = MaterialTheme.typography.labelLarge)
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = surface),
-            modifier = Modifier.fillMaxWidth(.84f)
+            modifier = Modifier
+                .fillMaxWidth(.88f)
+                .then(if (onPlayAudio != null) Modifier.clickable { onPlayAudio() } else Modifier)
         ) {
             Column(Modifier.padding(14.dp)) {
-                Text(if (message.isMine) "YOU · ${message.language}" else "REMOTE · ${message.language}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        if (message.isMine) "YOU · ${message.language}" else "REMOTE · ${message.language}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (message.hopCount > 0) {
+                        Text(
+                            "${message.hopCount} hop(s)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Blue
+                        )
+                    }
+                }
                 Spacer(Modifier.height(5.dp))
                 Text("“${message.text}”", style = MaterialTheme.typography.bodyLarge)
                 Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.PlayArrow, "Replay message", modifier = Modifier.size(17.dp), tint = Blue)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { onPlayAudio?.invoke() }
+                ) {
+                    Icon(Icons.Default.PlayArrow, "Play TTS speech", modifier = Modifier.size(18.dp), tint = Blue)
                     Spacer(Modifier.width(4.dp))
-                    Text("${message.time}${if (message.delivered && message.isMine) "  ✓✓" else ""}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Tap to speak", style = MaterialTheme.typography.labelSmall, color = Blue)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${message.time}${if (message.delivered && message.isMine) "  ✓✓" else ""}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

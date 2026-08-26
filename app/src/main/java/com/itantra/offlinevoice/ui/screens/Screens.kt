@@ -133,13 +133,6 @@ fun OnboardingScreen(onFinished: () -> Unit) {
 @Composable
 fun HomeScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit) {
     val ui = controller.ui
-    LaunchedEffect(ui.communicationState) {
-        when (ui.communicationState) {
-            CommunicationState.PROCESSING -> { delay(800); controller.setSending() }
-            CommunicationState.SENDING -> { delay(800); controller.markDelivered() }
-            else -> Unit
-        }
-    }
     Scaffold(topBar = { VoiceLinkTopBar("VoiceLink", trailing = { IconButton(onClick = { navigate(Route.Settings) }) { Icon(Icons.Default.Settings, "Settings") } }) }) { inset ->
         Column(Modifier.padding(inset).padding(horizontal = ScreenPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -306,6 +299,7 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("Audio settings", "16 kHz mono PCM (planned input profile)") }
             item { InfoCard("Model & system status", "Demo readiness and device health") { navigate(Route.SystemStatus) } }
             item { InfoCard("Text processing debug", "Inspect the STT → message pipeline") { navigate(Route.TextProcessingDebug) } }
+            item { InfoCard("TTS Debug & Benchmark", "Test offline speech synthesis, RTF, and playback") { navigate(Route.TTSDebug) } }
             item { InfoCard("Help & about", "How VoiceLink works offline") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }
         }
     }

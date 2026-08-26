@@ -28,6 +28,10 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -42,6 +46,16 @@ dependencies {
 
     // Offline STT - Vosk
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // Offline TTS - Sherpa-ONNX + ONNX Runtime
+    // Note: If the Maven artifact is unavailable, download the AAR from
+    // https://github.com/k2-fsa/sherpa-onnx/releases and place in app/libs/
+    // Then uncomment the fileTree line below and comment out the Maven line.
+    // implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.0")
+
+    // Coroutines for async TTS pipeline
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

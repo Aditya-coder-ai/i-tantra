@@ -15,16 +15,14 @@ class STTModelManager(private val context: Context) {
 
     fun isModelReady(language: STTLanguage): Boolean {
         val dir = File(getModelPath(language))
-        if (!dir.exists()) return false
+        if (!dir.exists() || !dir.isDirectory) return false
         
-        // Basic check for Sherpa-ONNX non-streaming (Zipformer) files
-        // Actual implementation would verify tokens.txt and encoder/decoder/joiner .onnx files
+        // Vosk models usually contain multiple files or subdirectories like 'am' and 'conf'
         val files = dir.list() ?: return false
-        return files.any { it.endsWith(".onnx") } && files.contains("tokens.txt")
+        return files.isNotEmpty()
     }
 
-    fun getEncoderPath(language: STTLanguage): String = File(getModelPath(language), "encoder.onnx").absolutePath
-    fun getDecoderPath(language: STTLanguage): String = File(getModelPath(language), "decoder.onnx").absolutePath
-    fun getJoinerPath(language: STTLanguage): String = File(getModelPath(language), "joiner.onnx").absolutePath
-    fun getTokensPath(language: STTLanguage): String = File(getModelPath(language), "tokens.txt").absolutePath
+    // These paths are specific to Sherpa-ONNX, keeping them for reference if needed, 
+    // but Vosk usually takes the directory path itself.
+    fun getVoskModelPath(language: STTLanguage): String = getModelPath(language)
 }

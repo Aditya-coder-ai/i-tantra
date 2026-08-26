@@ -20,6 +20,7 @@ import com.itantra.offlinevoice.ui.screens.SettingsScreen
 import com.itantra.offlinevoice.ui.screens.SplashScreen
 import com.itantra.offlinevoice.ui.screens.SystemStatusScreen
 import com.itantra.offlinevoice.ui.screens.TextProcessingDebugScreen
+import com.itantra.offlinevoice.ui.screens.TTSDebugScreen
 
 object Route {
     const val Splash = "splash"
@@ -35,6 +36,7 @@ object Route {
     const val SystemStatus = "system_status"
     const val About = "about"
     const val TextProcessingDebug = "text_processing_debug"
+    const val TTSDebug = "tts_debug"
 }
 
 @Composable
@@ -56,5 +58,6 @@ fun VoiceLinkApp() {
         composable(Route.SystemStatus) { SystemStatusScreen { navController.popBackStack() } }
         composable(Route.About) { AboutScreen { navController.popBackStack() } }
         composable(Route.TextProcessingDebug) { TextProcessingDebugScreen { navController.popBackStack() } }
+        composable(Route.TTSDebug) { TTSDebugScreen { navController.popBackStack() } }
     }
 }

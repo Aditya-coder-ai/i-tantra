@@ -3,9 +3,16 @@ package com.itantra.offlinevoice.ui.mock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.itantra.offlinevoice.audio.AudioChunk
+import com.itantra.offlinevoice.audio.AudioConfig
+import com.itantra.offlinevoice.audio.AudioRecorder
+import com.itantra.offlinevoice.audio.RecordingState
 import com.itantra.offlinevoice.audio.stt.STTLanguage
 import com.itantra.offlinevoice.audio.stt.STTResult
 import com.itantra.offlinevoice.audio.stt.VoskSttEngine
+import com.itantra.offlinevoice.audio.vad.SpeechSegment
+import com.itantra.offlinevoice.audio.vad.VadConfig
+import com.itantra.offlinevoice.audio.vad.VoiceActivityDetector
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -54,19 +61,26 @@ private val demoDevices = listOf(
     NearbyDevice("Field Unit 12", "Wi‑Fi Direct · 58% signal", 2)
 )
 
-class MockVoiceLinkController(context: Context) {
+class MockVoiceLinkController(context: Context) : AudioRecorder.Listener, VoiceActivityDetector.Listener {
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private val sttEngine = VoskSttEngine(context)
+    private val recorder = AudioRecorder(context, AudioConfig(), this)
+    private val vad = VoiceActivityDetector(VadConfig(), this)
     
     var ui by mutableStateOf(VoiceLinkUiState())
         private set
 
-    fun startTalking() = update { copy(communicationState = CommunicationState.LISTENING, lastMessage = "Listening locally…") }
+    fun startTalking() {
+        update { copy(communicationState = CommunicationState.LISTENING, lastMessage = "Listening locally…") }
+        recorder.startRecording()
+    }
     
     fun processSpeech(samples: ShortArray) {
         update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Converting speech…") }
         scope.launch(Dispatchers.Default) {
-            val language = STTLanguage.fromCode(ui.language.substringBefore(' ').lowercase())
+            val languageName = ui.language.substringBefore(' ').trim()
+            val language = STTLanguage.values().find { it.displayName.equals(languageName, ignoreCase = true) } ?: STTLanguage.ENGLISH
+            
             sttEngine.initialize(language)
             val result = sttEngine.transcribe(samples)
             
@@ -93,7 +107,43 @@ class MockVoiceLinkController(context: Context) {
         }
     }
 
-    fun releaseToProcess() = update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Finalizing audio…") }
+    fun releaseToProcess() {
+        update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Finalizing audio…") }
+        recorder.stopRecording()
+        vad.flush()
+    }
+
+    // AudioRecorder.Listener
+    override fun onStateChanged(state: RecordingState) {
+        Log.d("VoiceLink", "Recorder state: $state")
+    }
+
+    override fun onAudioChunk(chunk: AudioChunk) {
+        vad.processChunk(chunk)
+    }
+
+    override fun onAudioLevel(rms: Float, peak: Float) {
+        // Future: Update UI with real audio levels
+    }
+
+    override fun onError(message: String) {
+        Log.e("VoiceLink", "Recorder error: $message")
+        update { copy(lastMessage = "Error: $message", communicationState = CommunicationState.IDLE) }
+    }
+
+    // VoiceActivityDetector.Listener
+    override fun onSpeechStart(timestampNanos: Long) {
+        Log.d("VoiceLink", "Speech started")
+    }
+
+    override fun onSpeechEnd(segment: SpeechSegment) {
+        Log.d("VoiceLink", "Speech ended, processing ${segment.samples.size} samples")
+        processSpeech(segment.samples)
+    }
+
+    override fun onVadStateChanged(isSpeaking: Boolean, confidence: Float) {
+        // Future: Update UI VAD indicator
+    }
     fun setSending() = update { copy(communicationState = CommunicationState.SENDING, lastMessage = "Sending lightweight text…") }
     fun markDelivered() = update {
         copy(

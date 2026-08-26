@@ -2,6 +2,7 @@ package com.itantra.offlinevoice.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -18,6 +19,7 @@ import com.itantra.offlinevoice.ui.screens.PairingScreen
 import com.itantra.offlinevoice.ui.screens.SettingsScreen
 import com.itantra.offlinevoice.ui.screens.SplashScreen
 import com.itantra.offlinevoice.ui.screens.SystemStatusScreen
+import com.itantra.offlinevoice.ui.screens.TextProcessingDebugScreen
 
 object Route {
     const val Splash = "splash"
@@ -32,12 +34,14 @@ object Route {
     const val Settings = "settings"
     const val SystemStatus = "system_status"
     const val About = "about"
+    const val TextProcessingDebug = "text_processing_debug"
 }
 
 @Composable
 fun VoiceLinkApp() {
+    val context = LocalContext.current
     val navController = rememberNavController()
-    val controller = remember { MockVoiceLinkController() }
+    val controller = remember { MockVoiceLinkController(context) }
     NavHost(navController = navController, startDestination = Route.Splash) {
         composable(Route.Splash) { SplashScreen { navController.navigate(Route.Onboarding) { popUpTo(Route.Splash) { inclusive = true } } } }
         composable(Route.Onboarding) { OnboardingScreen { navController.navigate(Route.Home) { popUpTo(Route.Onboarding) { inclusive = true } } } }
@@ -51,5 +55,6 @@ fun VoiceLinkApp() {
         composable(Route.Settings) { SettingsScreen(controller, { navController.navigate(it) }) { navController.popBackStack() } }
         composable(Route.SystemStatus) { SystemStatusScreen { navController.popBackStack() } }
         composable(Route.About) { AboutScreen { navController.popBackStack() } }
+        composable(Route.TextProcessingDebug) { TextProcessingDebugScreen { navController.popBackStack() } }
     }
 }

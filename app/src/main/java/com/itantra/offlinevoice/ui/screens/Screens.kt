@@ -153,7 +153,15 @@ fun HomeScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit) 
             Spacer(Modifier.height(24.dp))
             Text(ui.mode.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(13.dp))
-            PushToTalkButton(ui.communicationState, controller::startTalking, controller::releaseToProcess)
+            PushToTalkButton(
+                state = ui.communicationState, 
+                onHold = controller::startTalking, 
+                onRelease = {
+                    controller.releaseToProcess()
+                    // In a real implementation, we'd get the segment from VAD
+                    // For now, we simulate the flow
+                }
+            )
             Spacer(Modifier.height(18.dp))
             val active = ui.communicationState == CommunicationState.LISTENING
             VoiceActivity(active)
@@ -297,6 +305,7 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("Emergency settings", "Alert phrase and confirmation") { navigate(Route.Emergency) } }
             item { InfoCard("Audio settings", "16 kHz mono PCM (planned input profile)") }
             item { InfoCard("Model & system status", "Demo readiness and device health") { navigate(Route.SystemStatus) } }
+            item { InfoCard("Text processing debug", "Inspect the STT → message pipeline") { navigate(Route.TextProcessingDebug) } }
             item { InfoCard("Help & about", "How VoiceLink works offline") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }
         }
     }

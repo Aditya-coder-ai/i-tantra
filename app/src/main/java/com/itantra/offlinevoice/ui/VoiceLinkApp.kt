@@ -7,6 +7,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.itantra.offlinevoice.ui.mock.MockVoiceLinkController
+import com.itantra.offlinevoice.security.SecurityController
 import com.itantra.offlinevoice.ui.screens.AboutScreen
 import com.itantra.offlinevoice.ui.screens.ConnectionScreen
 import com.itantra.offlinevoice.ui.screens.ConversationScreen
@@ -16,10 +17,13 @@ import com.itantra.offlinevoice.ui.screens.HomeScreen
 import com.itantra.offlinevoice.ui.screens.LanguageScreen
 import com.itantra.offlinevoice.ui.screens.OnboardingScreen
 import com.itantra.offlinevoice.ui.screens.PairingScreen
+import com.itantra.offlinevoice.ui.screens.SecurityDebugScreen
+import com.itantra.offlinevoice.ui.screens.SecurityStatusScreen
 import com.itantra.offlinevoice.ui.screens.SettingsScreen
 import com.itantra.offlinevoice.ui.screens.SplashScreen
 import com.itantra.offlinevoice.ui.screens.SystemStatusScreen
 import com.itantra.offlinevoice.ui.screens.TextProcessingDebugScreen
+import com.itantra.offlinevoice.ui.screens.TrustedDevicesScreen
 
 object Route {
     const val Splash = "splash"
@@ -35,6 +39,9 @@ object Route {
     const val SystemStatus = "system_status"
     const val About = "about"
     const val TextProcessingDebug = "text_processing_debug"
+    const val SecurityStatus = "security_status"
+    const val TrustedDevices = "trusted_devices"
+    const val SecurityDebug = "security_debug"
 }
 
 @Composable
@@ -42,6 +49,7 @@ fun VoiceLinkApp() {
     val context = LocalContext.current
     val navController = rememberNavController()
     val controller = remember { MockVoiceLinkController(context) }
+    val securityController = remember { SecurityController() }
     NavHost(navController = navController, startDestination = Route.Splash) {
         composable(Route.Splash) { SplashScreen { navController.navigate(Route.Onboarding) { popUpTo(Route.Splash) { inclusive = true } } } }
         composable(Route.Onboarding) { OnboardingScreen { navController.navigate(Route.Home) { popUpTo(Route.Onboarding) { inclusive = true } } } }
@@ -56,5 +64,8 @@ fun VoiceLinkApp() {
         composable(Route.SystemStatus) { SystemStatusScreen { navController.popBackStack() } }
         composable(Route.About) { AboutScreen { navController.popBackStack() } }
         composable(Route.TextProcessingDebug) { TextProcessingDebugScreen { navController.popBackStack() } }
+        composable(Route.SecurityStatus) { SecurityStatusScreen(securityController, { navController.navigate(it) }) { navController.popBackStack() } }
+        composable(Route.TrustedDevices) { TrustedDevicesScreen(securityController) { navController.popBackStack() } }
+        composable(Route.SecurityDebug) { SecurityDebugScreen(securityController) { navController.popBackStack() } }
     }
 }

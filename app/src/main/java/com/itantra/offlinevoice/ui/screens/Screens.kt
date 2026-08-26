@@ -571,6 +571,7 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("Security debug workbench", "Packet inspector, tamper testing & benchmarks") { navigate(Route.SecurityDebug) } }
             item { InfoCard("Model & Hardware Diagnostics", "RAM, Battery, Relayed Packets") { navigate(Route.SystemStatus) } }
             item { InfoCard("Text Processing Debugger", "Inspect STT normalizer & classifier") { navigate(Route.TextProcessingDebug) } }
+            item { InfoCard("TTS Debug & Benchmark", "Test offline speech synthesis, RTF, and playback") { navigate(Route.TTSDebug) } }
             item { InfoCard("Help & About", "Architecture details & offline protocols") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }
         }
     }

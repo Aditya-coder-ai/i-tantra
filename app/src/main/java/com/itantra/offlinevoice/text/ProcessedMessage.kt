@@ -20,5 +20,5 @@ data class ProcessedMessage(
     val confidenceStatus: ConfidenceStatus,
     val isFinal: Boolean,
     val utf8ByteSize: Int,
-    val processingTimeMs: Long
+    val processingTimeMs: Long,
 )

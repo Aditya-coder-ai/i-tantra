@@ -36,7 +36,7 @@ object LanguageNormalizer {
         "தமிழ்" to "ta",
         "తెలుగు" to "te",
         "ଓଡ଼ିଆ" to "or",
-        "বাংলা" to "bn"
+        "বাংলা" to "bn",
     )
 
     data class NormalizationResult(
@@ -65,8 +65,7 @@ object LanguageNormalizer {
         if (lower in SUPPORTED_CODES) return NormalizationResult(lower, isSupported = true)
 
         // Display name or native name match
-        val code = DISPLAY_TO_CODE[lower]
-        if (code != null) return NormalizationResult(code, isSupported = true)
+        DISPLAY_TO_CODE[lower]?.let { return NormalizationResult(it, isSupported = true) }
 
         // Unsupported language — explicit fallback, not a silent guess
         return NormalizationResult(lower, isSupported = false)

@@ -304,6 +304,8 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("Voice settings", "Input level, playback, and accessibility") }
             item { InfoCard("Emergency settings", "Alert phrase and confirmation") { navigate(Route.Emergency) } }
             item { InfoCard("Audio settings", "16 kHz mono PCM (planned input profile)") }
+            item { InfoCard("Security & encryption", "AES-256-GCM, paired devices, and sessions") { navigate(Route.SecurityStatus) } }
+            item { InfoCard("Security debug workbench", "Packet inspector, tamper testing & benchmarks") { navigate(Route.SecurityDebug) } }
             item { InfoCard("Model & system status", "Demo readiness and device health") { navigate(Route.SystemStatus) } }
             item { InfoCard("Text processing debug", "Inspect the STT → message pipeline") { navigate(Route.TextProcessingDebug) } }
             item { InfoCard("Help & about", "How VoiceLink works offline") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }

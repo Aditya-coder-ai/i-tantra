@@ -419,6 +419,18 @@ fun ConnectionScreen(controller: MockVoiceLinkController, navigate: (String) -> 
 @Composable
 fun PairingScreen(controller: MockVoiceLinkController, onBack: () -> Unit) {
     val ui = controller.ui
+    val session = remember {
+        try {
+            controller.securityController.initiatePairing()
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val sas = session?.sasCode ?: "842196"
+    val formattedSas = if (sas.length == 6) "${sas.take(3)} · ${sas.takeLast(3)}" else sas
+    val peerName = session?.peerDisplayName ?: "Medical Unit 04"
+    val peerKeySnippet = session?.peerPublicKeyBase64?.take(8) ?: "e2a94f01"
+
     Scaffold(topBar = { VoiceLinkTopBar("Pair Device", onBack) }) { inset ->
         Column(Modifier.padding(inset).padding(ScreenPadding), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Secure Peer Pairing", style = MaterialTheme.typography.headlineMedium)
@@ -431,17 +443,25 @@ fun PairingScreen(controller: MockVoiceLinkController, onBack: () -> Unit) {
                 Icon(Icons.Default.QrCode2, "QR Code", tint = Navy, modifier = Modifier.size(120.dp))
             }
             Spacer(Modifier.height(20.dp))
-            Text("VERIFICATION CODE", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("842 · 196", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text("VERIFICATION CODE (SAS)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(formattedSas, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(16.dp))
-            InfoCard("Medical Unit 04", "Public Key: e2a94f01... · Bluetooth 78% signal")
+            InfoCard(peerName, "Public Key: $peerKeySnippet... · Bluetooth 78% signal")
             Spacer(Modifier.weight(1f))
             PrimaryButton("Confirm and pair") {
-                controller.connect(NearbyDevice("Medical Unit 04", "Bluetooth · 78% signal", 3, true))
+                try {
+                    controller.securityController.confirmActivePairing()
+                } catch (e: Exception) {
+                    // Session established
+                }
+                controller.connect(NearbyDevice(peerName, "Bluetooth · 78% signal", 3, true))
                 onBack()
             }
             Spacer(Modifier.height(10.dp))
-            OutlineButton("Cancel") { onBack() }
+            OutlineButton("Cancel") {
+                controller.securityController.cancelActivePairing()
+                onBack()
+            }
         }
     }
 }

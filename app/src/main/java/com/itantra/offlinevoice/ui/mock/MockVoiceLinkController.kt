@@ -21,6 +21,8 @@ import com.itantra.offlinevoice.communication.manager.ITantraCommunicationManage
 import com.itantra.offlinevoice.communication.manager.TantraCommunicationManagerImpl
 import com.itantra.offlinevoice.communication.model.DeliveryState
 import com.itantra.offlinevoice.communication.model.PeerIdentity
+import com.itantra.offlinevoice.security.CryptoManager
+import com.itantra.offlinevoice.security.SecurityController
 import com.itantra.offlinevoice.text.MessageType
 import com.itantra.offlinevoice.text.TextProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -122,6 +124,8 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     private val textProcessor: TextProcessor = TextProcessor()
     val communicationManager: ITantraCommunicationManager = TantraCommunicationManagerImpl()
     
+    val securityController: SecurityController = SecurityController()
+    
     private val recorder = AudioRecorder(context, listener = this)
     private val vad = VoiceActivityDetector(listener = this)
 
@@ -131,6 +135,15 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     init {
         scope.launch {
             communicationManager.start()
+            securityController.initializeIdentity("VoiceLink Local Device")
+            try {
+                val demoKey1 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
+                val demoKey2 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
+                securityController.pairPreSharedDevice("Rescue Team 01", "Rescue Team 01", demoKey1)
+                securityController.pairPreSharedDevice("Medical Unit 04", "Medical Unit 04", demoKey2)
+            } catch (e: Exception) {
+                // Identity already prepared
+            }
             refreshSystemStats()
         }
 

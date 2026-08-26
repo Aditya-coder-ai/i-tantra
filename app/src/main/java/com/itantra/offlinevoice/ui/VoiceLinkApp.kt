@@ -49,7 +49,7 @@ fun VoiceLinkApp() {
     val context = LocalContext.current
     val navController = rememberNavController()
     val controller = remember { MockVoiceLinkController(context) }
-    val securityController = remember { SecurityController() }
+    val securityController = remember { controller.securityController }
     NavHost(navController = navController, startDestination = Route.Splash) {
         composable(Route.Splash) { SplashScreen { navController.navigate(Route.Onboarding) { popUpTo(Route.Splash) { inclusive = true } } } }
         composable(Route.Onboarding) { OnboardingScreen { navController.navigate(Route.Home) { popUpTo(Route.Onboarding) { inclusive = true } } } }

@@ -14,7 +14,7 @@ class MessageBuilder {
         senderId: String,
         classification: MessageClassifier.ClassificationResult,
         confidence: Float,
-        processingTimeMs: Long
+        processingTimeMs: Long,
     ): ProcessedMessage {
         val messageId = MessageIdentity.generateMessageId()
         val timestamp = MessageIdentity.utcTimestamp()

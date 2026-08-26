@@ -55,20 +55,16 @@ class TextCleaner {
         val lastChar = text.last()
         if (SENTENCE_TERMINATORS.contains(lastChar)) return text
 
-        // Detect predominant script to choose the correct full stop
         val script = detectPredominantScript(text)
-        val terminator = when (script) {
-            Script.DEVANAGARI, Script.GUJARATI, Script.MARATHI -> "।"
-            Script.BENGALI -> "।"
-            Script.ODIA -> "।"
-            Script.KANNADA, Script.TELUGU, Script.MALAYALAM, Script.TAMIL -> "."
-            else -> "."
+        return if ((script == Script.DEVANAGARI) || (script == Script.BENGALI) || (script == Script.GUJARATI) || (script == Script.ODIA)) {
+            "$text।"
+        } else {
+            "$text."
         }
-        return "$text$terminator"
     }
 
     internal enum class Script {
-        LATIN, DEVANAGARI, GUJARATI, MARATHI, BENGALI, ODIA,
+        LATIN, DEVANAGARI, GUJARATI, BENGALI, ODIA,
         KANNADA, TELUGU, TAMIL, MALAYALAM, OTHER
     }
 
@@ -85,25 +81,24 @@ class TextCleaner {
     }
 
     private fun classifyChar(c: Char): Script {
-        val cp = c.code
-        return when {
-            cp in 0x0900..0x097F -> Script.DEVANAGARI  // Hindi/Marathi share Devanagari
-            cp in 0x0A80..0x0AFF -> Script.GUJARATI
-            cp in 0x0980..0x09FF -> Script.BENGALI
-            cp in 0x0B00..0x0B7F -> Script.ODIA
-            cp in 0x0C00..0x0C7F -> Script.TELUGU
-            cp in 0x0C80..0x0CFF -> Script.KANNADA
-            cp in 0x0D00..0x0D7F -> Script.MALAYALAM
-            cp in 0x0B80..0x0BFF -> Script.TAMIL
-            cp in 0x0041..0x007A -> Script.LATIN
-            cp in 0x00C0..0x024F -> Script.LATIN   // Latin Extended
+        return when (c.code) {
+            in 0x0900..0x097F -> Script.DEVANAGARI  // Hindi/Marathi share Devanagari
+            in 0x0A80..0x0AFF -> Script.GUJARATI
+            in 0x0980..0x09FF -> Script.BENGALI
+            in 0x0B00..0x0B7F -> Script.ODIA
+            in 0x0C00..0x0C7F -> Script.TELUGU
+            in 0x0C80..0x0CFF -> Script.KANNADA
+            in 0x0D00..0x0D7F -> Script.MALAYALAM
+            in 0x0B80..0x0BFF -> Script.TAMIL
+            in 0x0041..0x007A -> Script.LATIN
+            in 0x00C0..0x024F -> Script.LATIN   // Latin Extended
             else -> Script.OTHER
         }
     }
 
-    private companion object {
-        val MULTIPLE_WHITESPACE = Regex("\\s{2,}")
-        val DUPLICATE_PUNCTUATION = Regex("([!?;:,।\u0964]){2,}")
-        val SENTENCE_TERMINATORS = setOf('.', '!', '?', '।', '\u0964', '\u2026')
+    companion object {
+        private val MULTIPLE_WHITESPACE = Regex("\\s{2,}")
+        private val DUPLICATE_PUNCTUATION = Regex("([!?;:,।]){2,}")
+        private val SENTENCE_TERMINATORS = setOf('.', '!', '?', '।', '\u2026')
     }
 }

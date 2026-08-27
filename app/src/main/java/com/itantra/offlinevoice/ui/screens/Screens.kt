@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Emergency
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NetworkWifi
 import androidx.compose.material.icons.filled.QrCode2
@@ -198,11 +199,94 @@ fun HomeScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit) 
             val active = ui.communicationState == CommunicationState.LISTENING
             VoiceActivity(active)
             Spacer(Modifier.height(7.dp))
-            Text(
-                if (active) "Release to transmit utterance" else ui.lastMessage,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
+            // Show recording duration while listening
+            if (active) {
+                Text(
+                    "Recording… Hold to keep listening",
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                    color = Emergency
+                )
+            } else {
+                Text(
+                    ui.lastMessage,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
+                )
+            }
+            // Transcribing spinner
+            if (ui.isTranscribing) {
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = Blue
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Transcribing speech…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (ui.recordingDurationMs > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Recorded ${ui.recordingDurationMs / 1000}.${(ui.recordingDurationMs % 1000) / 100}s of audio",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            // Transcribed text preview card
+            if (ui.transcribedText.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.GraphicEq,
+                                contentDescription = null,
+                                tint = Blue,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "RECOGNIZED SPEECH",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Blue
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "\u201C${ui.transcribedText}\u201D",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (ui.recordingDurationMs > 0) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Audio: ${ui.recordingDurationMs / 1000}.${(ui.recordingDurationMs % 1000) / 100}s",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
             if (ui.communicationState != CommunicationState.IDLE) {
                 Spacer(Modifier.height(22.dp))
                 ProcessingSteps(ui.communicationState)

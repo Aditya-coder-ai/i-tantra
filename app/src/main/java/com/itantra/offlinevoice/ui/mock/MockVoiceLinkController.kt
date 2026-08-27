@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,6 +12,7 @@ import androidx.compose.runtime.setValue
 import com.itantra.offlinevoice.audio.AudioChunk
 import com.itantra.offlinevoice.audio.AudioRecorder
 import com.itantra.offlinevoice.audio.RecordingState
+import com.itantra.offlinevoice.audio.stt.AndroidSpeechRecognizerEngine
 import com.itantra.offlinevoice.audio.stt.STTLanguage
 import com.itantra.offlinevoice.audio.stt.STTResult
 import com.itantra.offlinevoice.audio.stt.VoskSttEngine
@@ -100,7 +102,10 @@ data class VoiceLinkUiState(
     val voiceSettings: VoiceSettingsState = VoiceSettingsState(),
     val audioSettings: AudioSettingsState = AudioSettingsState(),
     val emergencySettings: EmergencySettingsState = EmergencySettingsState(),
-    val systemStats: SystemHardwareStats = SystemHardwareStats()
+    val systemStats: SystemHardwareStats = SystemHardwareStats(),
+    val transcribedText: String = "",
+    val isTranscribing: Boolean = false,
+    val recordingDurationMs: Long = 0L
 )
 
 private val defaultMessages = listOf(
@@ -128,6 +133,11 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     
     private val recorder = AudioRecorder(context, listener = this)
     private val vad = VoiceActivityDetector(listener = this)
+    private val androidSpeechRecognizer = AndroidSpeechRecognizerEngine(context)
+    private var isUsingAndroidSpeech = false
+    
+    // Recording timing
+    private var recordingStartTimeMs: Long = 0L
 
     var ui by mutableStateOf(VoiceLinkUiState())
         private set
@@ -189,14 +199,100 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     }
 
     fun startTalking() {
-        update { copy(communicationState = CommunicationState.LISTENING, lastMessage = "Listening locally…") }
-        recorder.startRecording()
+        recordingStartTimeMs = SystemClock.elapsedRealtime()
+        val langCode = getLangCode()
+        val sttLang = STTLanguage.fromCode(langCode)
+
+        val voskAvailable = sttEngine.isModelAvailable(sttLang)
+
+        if (voskAvailable) {
+            isUsingAndroidSpeech = false
+            val started = recorder.startRecording()
+            if (!started) return
+        } else {
+            isUsingAndroidSpeech = true
+            androidSpeechRecognizer.startListening(
+                language = sttLang,
+                onResult = { text ->
+                    val duration = SystemClock.elapsedRealtime() - recordingStartTimeMs
+                    processRecognizedText(text, sttLang, duration)
+                },
+                onError = { errorMsg ->
+                    update {
+                        copy(
+                            communicationState = CommunicationState.IDLE,
+                            lastMessage = errorMsg,
+                            isTranscribing = false
+                        )
+                    }
+                }
+            )
+        }
+
+        update {
+            copy(
+                communicationState = CommunicationState.LISTENING,
+                lastMessage = "Listening locally…",
+                transcribedText = "",
+                isTranscribing = false,
+                recordingDurationMs = 0L
+            )
+        }
     }
 
     fun releaseToProcess() {
-        update { copy(communicationState = CommunicationState.PROCESSING, lastMessage = "Processing speech & normalizing text…") }
-        recorder.stopRecording()
-        vad.flush()
+        if (ui.communicationState != CommunicationState.LISTENING) {
+            return
+        }
+        val duration = SystemClock.elapsedRealtime() - recordingStartTimeMs
+
+        if (duration < 250) {
+            if (isUsingAndroidSpeech) {
+                androidSpeechRecognizer.stopListening()
+            } else {
+                recorder.stopRecording()
+                vad.reset()
+            }
+            update {
+                copy(
+                    communicationState = CommunicationState.IDLE,
+                    lastMessage = "Hold button while speaking",
+                    isTranscribing = false,
+                    recordingDurationMs = 0L
+                )
+            }
+            return
+        }
+
+        update {
+            copy(
+                communicationState = CommunicationState.PROCESSING,
+                lastMessage = "Transcribing speech…",
+                isTranscribing = true,
+                recordingDurationMs = duration
+            )
+        }
+
+        if (isUsingAndroidSpeech) {
+            androidSpeechRecognizer.stopListening()
+        } else {
+            recorder.stopRecording()
+            vad.flush()
+        }
+
+        // Fallback safeguard: if recognizer does not produce speech within 6s, reset gracefully to IDLE
+        scope.launch {
+            delay(6000)
+            if (ui.communicationState == CommunicationState.PROCESSING && ui.isTranscribing) {
+                update {
+                    copy(
+                        communicationState = CommunicationState.IDLE,
+                        lastMessage = "No speech detected.",
+                        isTranscribing = false
+                    )
+                }
+            }
+        }
     }
 
     override fun onAudioChunk(chunk: AudioChunk) {
@@ -220,31 +316,73 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     }
 
     override fun onSpeechEnd(segment: SpeechSegment) {
-        scope.launch {
-            val langCode = getLangCode()
-            val sttLang = STTLanguage.fromCode(langCode)
-            
-            // 1. Initialize engine for selected language
-            val initSuccess = sttEngine.initialize(sttLang)
-            if (!initSuccess) {
-                update { copy(communicationState = CommunicationState.IDLE, lastMessage = "Error: STT model for $langCode not found.") }
-                return@launch
+        val langCode = getLangCode()
+        val sttLang = STTLanguage.fromCode(langCode)
+        val durationMs = (segment.samples.size.toFloat() / 16000 * 1000).toLong()
+
+        val initSuccess = sttEngine.initialize(sttLang)
+        val text = if (initSuccess) {
+            sttEngine.transcribe(segment.samples).text
+        } else {
+            ""
+        }
+
+        if (text.isNotBlank()) {
+            processRecognizedText(text, sttLang, durationMs)
+        } else {
+            update {
+                copy(
+                    communicationState = CommunicationState.IDLE,
+                    lastMessage = "No speech detected.",
+                    isTranscribing = false
+                )
             }
+        }
+    }
 
-            // 2. Perform transcription
-            val sttResult = sttEngine.transcribe(segment.samples)
+    private fun processRecognizedText(text: String, sttLang: STTLanguage, durationMs: Long) {
+        scope.launch {
+            val sttResult = STTResult(
+                text = text,
+                language = sttLang,
+                confidence = 0.95f,
+                processingTimeMs = 100L,
+                audioDurationMs = durationMs,
+                isFinal = true
+            )
 
-            // 3. Pass through text processor
+            // Pass through text processor
             val procResult = textProcessor.process(
                 sttResult = sttResult,
                 conversationId = "conv_active",
                 senderId = "local_node"
             )
             val processed = procResult.message ?: run {
-                update { copy(communicationState = CommunicationState.IDLE, lastMessage = "No speech detected.") }
+                update {
+                    copy(
+                        communicationState = CommunicationState.IDLE,
+                        lastMessage = "No speech detected.",
+                        isTranscribing = false,
+                        transcribedText = ""
+                    )
+                }
                 return@launch
             }
 
+            // Show transcribed text to the user before sending
+            update {
+                copy(
+                    communicationState = CommunicationState.PROCESSING,
+                    lastMessage = "Recognized speech:",
+                    isTranscribing = false,
+                    transcribedText = processed.text
+                )
+            }
+
+            // Let the user see the transcription for 1.5 seconds
+            delay(1500)
+
+            // Now send the message
             update {
                 copy(
                     communicationState = CommunicationState.SENDING,
@@ -252,7 +390,6 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 )
             }
 
-            // 4. Send through communication manager
             val dummyRecipient = PeerIdentity(
                 alias = ui.connectedDevice,
                 publicKey = ByteArray(32) { 0x42.toByte() },
@@ -283,7 +420,8 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                                 copy(
                                     communicationState = CommunicationState.RECEIVED,
                                     lastMessage = "Delivered to ${ui.connectedDevice}",
-                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true) else it }
+                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true) else it },
+                                    transcribedText = ""
                                 )
                             }
                         }
@@ -292,12 +430,19 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                                 copy(
                                     communicationState = CommunicationState.RECEIVED,
                                     lastMessage = "Relayed via ${state.hopCount} hop(s)",
-                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true, hopCount = state.hopCount) else it }
+                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true, hopCount = state.hopCount) else it },
+                                    transcribedText = ""
                                 )
                             }
                         }
                         is DeliveryState.Failed -> {
-                            update { copy(communicationState = CommunicationState.IDLE, lastMessage = "Failed: ${state.reason}") }
+                            update {
+                                copy(
+                                    communicationState = CommunicationState.IDLE,
+                                    lastMessage = "Failed: ${state.reason}",
+                                    transcribedText = ""
+                                )
+                            }
                         }
                     }
                 }
@@ -522,6 +667,22 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             "odia" -> "or"
             "english" -> "en"
             else -> "hi"
+        }
+    }
+
+    private fun getFallbackSampleText(langCode: String): String {
+        return when (langCode.lowercase()) {
+            "hi" -> "नमस्ते, सहायता की आवश्यकता है"
+            "gu" -> "મને મદદની જરૂર છે"
+            "mr" -> "मला मदतीची गरज आहे"
+            "kn" -> "ನನಗೆ ಸಹಾಯ ಬೇಕು"
+            "ml" -> "എനിക്ക് സഹായം വേണം"
+            "ta" -> "எனக்கு உதவி தேவை"
+            "te" -> "నాకు సహాయం కావాలి"
+            "bn" -> "আমার সাহায্য দরকার"
+            "or" -> "ମୋତେ ସାହାଯ୍ୟ ଦରକାର"
+            "en" -> "Emergency assistance required"
+            else -> "Voice message recorded"
         }
     }
 

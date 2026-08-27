@@ -1,5 +1,10 @@
 package com.itantra.offlinevoice.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,10 +40,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -143,17 +152,47 @@ fun PushToTalkButton(state: CommunicationState, onHold: () -> Unit, onRelease: (
     val isListening = state == CommunicationState.LISTENING
     val color = if (isListening) Emergency else Blue
     val message = when (state) {
-        CommunicationState.LISTENING -> "LISTENING…"
+        CommunicationState.LISTENING -> "RELEASE\nTO SEND"
         CommunicationState.PROCESSING -> "PROCESSING"
         CommunicationState.SENDING -> "SENDING"
         CommunicationState.RECEIVED -> "DELIVERED"
         CommunicationState.IDLE -> "HOLD\nTO TALK"
     }
+
+    val currentOnHold by rememberUpdatedState(onHold)
+    val currentOnRelease by rememberUpdatedState(onRelease)
+    val currentState by rememberUpdatedState(state)
+
+    // Pulsating animation for the outer ring while listening
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.13f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    val outerScale = if (isListening) pulseScale else 1f
+    val outerAlpha = if (isListening) pulseAlpha else 0.13f
+
     Box(
         modifier = Modifier
             .size(238.dp)
+            .graphicsLayer(scaleX = outerScale, scaleY = outerScale)
             .clip(CircleShape)
-            .background(color.copy(alpha = .13f))
+            .background(color.copy(alpha = outerAlpha))
             .padding(12.dp)
             .border(2.dp, color.copy(alpha = .22f), CircleShape),
         contentAlignment = Alignment.Center
@@ -163,14 +202,14 @@ fun PushToTalkButton(state: CommunicationState, onHold: () -> Unit, onRelease: (
                 .matchParentSize()
                 .clip(CircleShape)
                 .background(color)
-                .pointerInput(state) {
+                .pointerInput(Unit) {
                     detectTapGestures(onPress = {
-                        if (state == CommunicationState.IDLE || state == CommunicationState.RECEIVED) {
-                            onHold()
+                        if (currentState == CommunicationState.IDLE || currentState == CommunicationState.RECEIVED) {
+                            currentOnHold()
                             try {
                                 tryAwaitRelease()
                             } finally {
-                                onRelease()
+                                currentOnRelease()
                             }
                         }
                     })
@@ -179,7 +218,12 @@ fun PushToTalkButton(state: CommunicationState, onHold: () -> Unit, onRelease: (
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color.White, modifier = Modifier.size(44.dp))
+                Icon(
+                    if (isListening) Icons.Default.Mic else Icons.Default.GraphicEq,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(44.dp)
+                )
                 Spacer(Modifier.height(9.dp))
                 Text(message, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             }

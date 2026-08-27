@@ -6,7 +6,7 @@ import android.media.MediaRecorder
 /** PCM format consumed by the later VAD and offline STT stages. */
 data class AudioConfig(
     val sampleRateHz: Int = 16_000,
-    val audioSource: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION,
+    val audioSource: Int = MediaRecorder.AudioSource.MIC,
     val channelConfig: Int = AudioFormat.CHANNEL_IN_MONO,
     val encoding: Int = AudioFormat.ENCODING_PCM_16BIT,
     val chunkDurationMs: Int = 20

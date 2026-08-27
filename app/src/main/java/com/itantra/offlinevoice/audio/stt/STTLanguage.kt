@@ -13,6 +13,21 @@ enum class STTLanguage(val code: String, val displayName: String, val nativeName
     ODIA("or", "Odia", "ଓଡ଼ିଆ"),
     BENGALI("bn", "Bengali", "বাংলা");
 
+    val localeTag: String
+        get() = when (code) {
+            "hi" -> "hi-IN"
+            "gu" -> "gu-IN"
+            "mr" -> "mr-IN"
+            "kn" -> "kn-IN"
+            "ml" -> "ml-IN"
+            "ta" -> "ta-IN"
+            "te" -> "te-IN"
+            "bn" -> "bn-IN"
+            "or" -> "or-IN"
+            "en" -> "en-IN"
+            else -> "en-US"
+        }
+
     companion object {
         fun fromCode(code: String): STTLanguage = values().find { it.code == code } ?: ENGLISH
     }

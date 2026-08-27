@@ -229,8 +229,14 @@ class VoiceActivityDetector(
 
     /** Flushes any ongoing speech utterance and resets VAD state. */
     fun flush() = synchronized(lock) {
-        if (state == State.SPEECH || state == State.HANGOVER) {
+        if (state == State.SPEECH || state == State.HANGOVER || speechChunks.isNotEmpty()) {
             finishSpeechLocked()
+        } else if (preRollSize > 0) {
+            // Manual push-to-talk release: extract preserved pre-roll frames so short speech isn't lost
+            beginSpeechLocked(System.nanoTime())
+            finishSpeechLocked()
+        } else {
+            reset()
         }
     }
 

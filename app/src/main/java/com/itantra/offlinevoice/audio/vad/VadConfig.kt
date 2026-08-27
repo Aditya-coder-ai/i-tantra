@@ -22,7 +22,7 @@ data class VadConfig(
     val minZcr: Float = 0.01f,
     val maxZcr: Float = 0.65f,
     val speechOnsetFrames: Int = 3,
-    val speechHangoverFrames: Int = 22,
+    val speechHangoverFrames: Int = 40,
     val preRollFrames: Int = 15,
     val maxUtteranceMs: Long = 30_000L
 ) {

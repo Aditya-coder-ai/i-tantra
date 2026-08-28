@@ -41,6 +41,13 @@ import com.itantra.offlinevoice.network.TransportManager
 import com.itantra.offlinevoice.network.TransportType
 import com.itantra.offlinevoice.network.VoiceLinkDevice
 import com.itantra.offlinevoice.security.EncryptedMessagePacket
+import com.itantra.offlinevoice.translation.OfflineTranslationEngine
+import com.itantra.offlinevoice.translation.SupportedLanguage
+import com.itantra.offlinevoice.translation.TextLanguageDetector
+import com.itantra.offlinevoice.translation.TranslationEngine
+import com.itantra.offlinevoice.translation.TranslationPath
+import com.itantra.offlinevoice.translation.TranslationQueue
+import com.itantra.offlinevoice.translation.TranslationResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,7 +71,14 @@ data class VoiceMessage(
     val delivered: Boolean = true,
     val emergency: Boolean = false,
     val hopCount: Int = 0,
-    val latencyMs: Long = 0L
+    val latencyMs: Long = 0L,
+    val originalText: String = text,
+    val originalLanguage: String = language,
+    val translatedText: String? = null,
+    val targetLanguage: String? = null,
+    val isTranslated: Boolean = false,
+    val translationPath: String? = null,
+    val translationLatencyMs: Long = 0L
 )
 
 data class NearbyDevice(
@@ -81,7 +95,10 @@ data class VoiceSettingsState(
     val ttsSpeed: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
     val micSensitivity: Float = 0.8f,
-    val autoPlayIncoming: Boolean = true
+    val autoPlayIncoming: Boolean = true,
+    val mySpeakingLanguage: String = "en",
+    val myListeningLanguage: String = "hi",
+    val autoTranslateEnabled: Boolean = true
 )
 
 data class AudioSettingsState(
@@ -134,6 +151,8 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     
     // Core Engine Instances
     val ttsEngine: TtsEngine = TtsEngine(context)
+    val translationEngine: OfflineTranslationEngine = OfflineTranslationEngine(context)
+    val translationQueue: TranslationQueue = TranslationQueue(translationEngine)
     private val sttEngine: VoskSttEngine = VoskSttEngine(context)
     private val textProcessor: TextProcessor = TextProcessor()
     val communicationManager: ITantraCommunicationManager = TantraCommunicationManagerImpl()
@@ -274,32 +293,58 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                         EncryptedMessagePacket.deserializeProcessedMessage(rawBytes)
                     }
 
+                    val sourceLang = SupportedLanguage.fromCode(decryptedMessage.language)
+                    val listeningLang = SupportedLanguage.fromCode(ui.voiceSettings.myListeningLanguage)
+
+                    // Execute Offline Translation if Auto-Translate is enabled and source != target
+                    val translationResult = if (ui.voiceSettings.autoTranslateEnabled && sourceLang != listeningLang) {
+                        update {
+                            copy(
+                                communicationState = CommunicationState.PROCESSING,
+                                lastMessage = "Translating ${sourceLang.displayName} → ${listeningLang.displayName}..."
+                            )
+                        }
+                        translationQueue.enqueueAndWait(decryptedMessage, listeningLang)
+                    } else {
+                        TranslationResult.sameLanguagePassthrough(decryptedMessage.text, sourceLang)
+                    }
+
                     val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                    val finalDisplayedText = if (translationResult.isTranslationRequired) translationResult.translatedText else decryptedMessage.text
+                    val finalLanguageCode = if (translationResult.isTranslationRequired) translationResult.targetLanguage.code else decryptedMessage.language
+
                     val newMessage = VoiceMessage(
                         id = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1,
-                        text = decryptedMessage.text,
+                        text = finalDisplayedText,
                         isMine = false,
-                        language = decryptedMessage.language,
+                        language = finalLanguageCode,
                         time = timeStr,
                         delivered = true,
-                        emergency = decryptedMessage.messageType == MessageType.EMERGENCY
+                        emergency = decryptedMessage.messageType == MessageType.EMERGENCY,
+                        originalText = decryptedMessage.text,
+                        originalLanguage = sourceLang.displayName,
+                        translatedText = if (translationResult.isTranslationRequired) translationResult.translatedText else null,
+                        targetLanguage = if (translationResult.isTranslationRequired) translationResult.targetLanguage.displayName else null,
+                        isTranslated = translationResult.isTranslationRequired,
+                        translationPath = translationResult.translationPath.displayName,
+                        translationLatencyMs = translationResult.translationTimeMs
                     )
 
                     update {
                         copy(
                             messages = messages + newMessage,
-                            lastMessage = "Received: ${decryptedMessage.text}",
+                            lastMessage = if (newMessage.isTranslated) "Translated to ${listeningLang.displayName}: ${newMessage.text}" else "Received: ${newMessage.text}",
                             communicationState = CommunicationState.RECEIVED
                         )
                     }
 
-                    // Automatic Offline TTS Playback on Receiving Phone
+                    // Automatic Offline TTS Playback in Receiver's Preferred Language
                     if (ui.voiceSettings.autoPlayIncoming) {
-                        Log.i("VoiceLinkController", "🔊 Auto-playing incoming voice message: '${decryptedMessage.text}' (${decryptedMessage.language})")
-                        ttsEngine.speak(decryptedMessage.text, decryptedMessage.language)
+                        Log.i("VoiceLinkController", "🔊 Auto-playing incoming voice message in $finalLanguageCode: '$finalDisplayedText'")
+                        ttsEngine.speak(finalDisplayedText, finalLanguageCode)
                     }
                 } catch (e: Exception) {
-                    Log.e("VoiceLinkController", "Failed to decrypt incoming packet: ${e.message}", e)
+                    Log.e("VoiceLinkController", "Failed to process incoming packet: ${e.message}", e)
                 }
             }
         }
@@ -596,8 +641,31 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 )
             }
 
+            // Local Translation for Pocket Translator mode
+            // The configured speaking language guides STT, but it can be stale when
+            // someone types a message or switches languages mid-conversation.  Do
+            // not let clearly English text be tagged as Hindi and bypass translation.
+            val configuredSourceLang = SupportedLanguage.fromCode(sttLang.code)
+            val sourceLang = TextLanguageDetector.detectUnambiguousLanguage(processed.text)
+                ?: configuredSourceLang
+            val targetLang = SupportedLanguage.fromCode(ui.voiceSettings.myListeningLanguage)
+
+            val translationResult = if (ui.voiceSettings.autoTranslateEnabled && sourceLang != targetLang) {
+                translationEngine.translate(processed.text, sourceLang, targetLang)
+            } else {
+                TranslationResult.sameLanguagePassthrough(processed.text, sourceLang)
+            }
+
+            val finalDisplayedText = if (translationResult.isTranslationRequired) translationResult.translatedText else processed.text
+            val finalLanguageCode = if (translationResult.isTranslationRequired) translationResult.targetLanguage.code else sttLang.code
+
             // Let the user see the transcription for 1 second
             delay(1000)
+
+            // Play the translated text locally so it acts like a pocket translator
+            if (translationResult.isTranslationRequired && ui.voiceSettings.autoPlayIncoming) {
+                ttsEngine.speak(finalDisplayedText, finalLanguageCode)
+            }
 
             // Now send the message
             update {
@@ -611,17 +679,24 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             val pendingId = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1
             val pendingMessage = VoiceMessage(
                 id = pendingId,
-                text = processed.text,
+                text = finalDisplayedText,
                 isMine = true,
-                language = ui.language.substringBefore('·').trim(),
+                language = finalLanguageCode,
                 time = timeStr,
                 delivered = false,
-                emergency = processed.messageType == MessageType.EMERGENCY
+                emergency = processed.messageType == MessageType.EMERGENCY,
+                originalText = processed.text,
+                originalLanguage = sourceLang.displayName,
+                translatedText = if (translationResult.isTranslationRequired) translationResult.translatedText else null,
+                targetLanguage = if (translationResult.isTranslationRequired) translationResult.targetLanguage.displayName else null,
+                isTranslated = translationResult.isTranslationRequired,
+                translationPath = translationResult.translationPath.displayName,
+                translationLatencyMs = translationResult.translationTimeMs
             )
 
             update { copy(messages = messages + pendingMessage) }
 
-            // Real Encryption via SecurityController
+            // Real Encryption via SecurityController (sends the original processed message)
             val targetPeer = transportManager.connectedDevice.value
             val recipientId = targetPeer?.deviceId ?: "VL-PEER"
             try {
@@ -706,8 +781,67 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         update { copy(messages = emptyList(), lastMessage = "Messages cleared") }
     }
 
+    fun simulateIncomingMessage(
+        text: String? = null,
+        languageCode: String? = null
+    ) {
+        scope.launch {
+            val listeningLang = SupportedLanguage.fromCode(ui.voiceSettings.myListeningLanguage)
+            val isListeningHindi = listeningLang.code == "hi"
+            val actualLangCode = languageCode ?: if (isListeningHindi) "en" else "hi"
+            val actualText = text ?: if (isListeningHindi) "I need help. There is a fire." else "मुझे मदद चाहिए। वहाँ आग लगी है।"
+            val sourceLang = SupportedLanguage.fromCode(actualLangCode)
+
+            val translationResult = if (ui.voiceSettings.autoTranslateEnabled && sourceLang != listeningLang) {
+                translationEngine.translate(actualText, sourceLang, listeningLang)
+            } else {
+                TranslationResult.sameLanguagePassthrough(actualText, sourceLang)
+            }
+
+            val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+            val finalDisplayedText = if (translationResult.isTranslationRequired) translationResult.translatedText else actualText
+            val finalLanguageCode = if (translationResult.isTranslationRequired) translationResult.targetLanguage.code else actualLangCode
+
+            val newMessage = VoiceMessage(
+                id = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1,
+                text = finalDisplayedText,
+                isMine = false,
+                language = finalLanguageCode,
+                time = timeStr,
+                delivered = true,
+                emergency = actualText.contains("आग") || actualText.contains("fire") || actualText.contains("help") || actualText.contains("मदद"),
+                originalText = actualText,
+                originalLanguage = sourceLang.displayName,
+                translatedText = if (translationResult.isTranslationRequired) translationResult.translatedText else null,
+                targetLanguage = if (translationResult.isTranslationRequired) translationResult.targetLanguage.displayName else null,
+                isTranslated = translationResult.isTranslationRequired,
+                translationPath = translationResult.translationPath.displayName,
+                translationLatencyMs = translationResult.translationTimeMs
+            )
+
+            update {
+                copy(
+                    messages = messages + newMessage,
+                    lastMessage = if (newMessage.isTranslated) "Translated to ${listeningLang.displayName}: ${newMessage.text}" else "Received: ${newMessage.text}",
+                    communicationState = CommunicationState.RECEIVED
+                )
+            }
+
+            if (ui.voiceSettings.autoPlayIncoming) {
+                ttsEngine.speak(finalDisplayedText, finalLanguageCode)
+            }
+        }
+    }
+
     fun chooseLanguage(language: String) {
-        update { copy(language = language) }
+        val lang = SupportedLanguage.fromCode(language)
+        update {
+            copy(
+                language = "${lang.displayName} · ${lang.nativeName}",
+                voiceSettings = voiceSettings.copy(mySpeakingLanguage = lang.code),
+                lastMessage = "Speaking language set to ${lang.displayName}"
+            )
+        }
     }
 
     fun chooseMode(mode: String) = update { copy(mode = mode) }
@@ -845,13 +979,56 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         ttsEngine.setPitch(pitch)
         update {
             copy(
-                voiceSettings = VoiceSettingsState(
+                voiceSettings = voiceSettings.copy(
                     ttsSpeed = speed,
                     ttsPitch = pitch,
                     micSensitivity = sensitivity,
                     autoPlayIncoming = autoPlay
                 )
             )
+        }
+    }
+
+    fun setSpeakingLanguage(langCode: String) {
+        val lang = SupportedLanguage.fromCode(langCode)
+        update {
+            copy(
+                language = "${lang.displayName} · ${lang.nativeName}",
+                voiceSettings = voiceSettings.copy(mySpeakingLanguage = lang.code),
+                lastMessage = "Speaking language set to ${lang.displayName}"
+            )
+        }
+    }
+
+    fun setListeningLanguage(langCode: String) {
+        val lang = SupportedLanguage.fromCode(langCode)
+        update {
+            copy(
+                voiceSettings = voiceSettings.copy(myListeningLanguage = lang.code),
+                lastMessage = "Preferred listening language set to ${lang.displayName}"
+            )
+        }
+    }
+
+    fun toggleAutoTranslate(enabled: Boolean) {
+        update {
+            copy(
+                voiceSettings = voiceSettings.copy(autoTranslateEnabled = enabled),
+                lastMessage = if (enabled) "Offline Auto-Translate enabled" else "Offline Auto-Translate disabled"
+            )
+        }
+    }
+
+    fun replayMessageVoice(message: VoiceMessage, useOriginal: Boolean = false) {
+        val textToSpeak = if (useOriginal || !message.isTranslated) message.originalText else (message.translatedText ?: message.text)
+        val langCode = if (useOriginal || !message.isTranslated) {
+            SupportedLanguage.fromCode(message.originalLanguage).code
+        } else {
+            SupportedLanguage.fromCode(message.targetLanguage ?: message.language).code
+        }
+        Log.i("VoiceLinkController", "🔊 Replaying voice message in $langCode: '$textToSpeak'")
+        if (!ttsEngine.speak(textToSpeak, langCode)) {
+            update { copy(lastMessage = ttsEngine.lastError ?: "Unable to play voice message") }
         }
     }
 
@@ -910,22 +1087,14 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         }
     }
 
-    private fun getLangCode(): String = getLangCodeForName(ui.language.substringBefore('·').trim())
+    private fun getLangCode(): String {
+        return ui.voiceSettings.mySpeakingLanguage.ifBlank {
+            SupportedLanguage.fromCode(ui.language).code
+        }
+    }
 
     private fun getLangCodeForName(name: String): String {
-        return when (name.lowercase()) {
-            "hindi" -> "hi"
-            "gujarati" -> "gu"
-            "marathi" -> "mr"
-            "kannada" -> "kn"
-            "malayalam" -> "ml"
-            "tamil" -> "ta"
-            "telugu" -> "te"
-            "bengali" -> "bn"
-            "odia" -> "or"
-            "english" -> "en"
-            else -> "hi"
-        }
+        return SupportedLanguage.fromCode(name).code
     }
 
     private fun getFallbackSampleText(langCode: String): String {

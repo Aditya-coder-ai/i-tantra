@@ -362,8 +362,17 @@ fun ConversationScreen(controller: MockVoiceLinkController, onBack: () -> Unit) 
                 "Conversation",
                 onBack = onBack,
                 trailing = {
-                    IconButton(onClick = { controller.clearMessages() }) {
-                        Icon(Icons.Default.Delete, "Clear messages")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = {
+                            val incomingText = if (controller.ui.voiceSettings.myListeningLanguage == "en") "नमस्ते, यहाँ सहायता की आवश्यकता है।" else "I need help. There is a fire."
+                            val incomingLang = if (controller.ui.voiceSettings.myListeningLanguage == "en") "hi" else "en"
+                            controller.simulateIncomingMessage(incomingText, incomingLang)
+                        }) {
+                            Icon(Icons.Default.Translate, "Simulate Incoming Message", tint = Blue)
+                        }
+                        IconButton(onClick = { controller.clearMessages() }) {
+                            Icon(Icons.Default.Delete, "Clear messages")
+                        }
                     }
                 }
             )
@@ -413,9 +422,11 @@ fun ConversationScreen(controller: MockVoiceLinkController, onBack: () -> Unit) 
                 Spacer(Modifier.height(8.dp))
             }
             items(ui.messages, key = { it.id }) { message ->
-                MessageBubble(message) {
-                    controller.playTtsMessage(message)
-                }
+                MessageBubble(
+                    message = message,
+                    onPlayAudio = { controller.replayMessageVoice(message, useOriginal = false) },
+                    onPlayOriginal = { controller.replayMessageVoice(message, useOriginal = true) }
+                )
             }
             item {
                 Spacer(Modifier.height(20.dp))
@@ -839,14 +850,79 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
     var showVoiceDialog by remember { mutableStateOf(false) }
     var showAudioDialog by remember { mutableStateOf(false) }
     var showEmergencyDialog by remember { mutableStateOf(false) }
+    var showSpeakingLangDialog by remember { mutableStateOf(false) }
+    var showListeningLangDialog by remember { mutableStateOf(false) }
+
+    val allSupportedLanguages = listOf(
+        "en" to "English · English",
+        "hi" to "Hindi · हिन्दी",
+        "gu" to "Gujarati · ગુજરાતી",
+        "mr" to "Marathi · मराठी",
+        "kn" to "Kannada · ಕನ್ನಡ",
+        "ml" to "Malayalam · മലയാളം",
+        "ta" to "Tamil · தமிழ்",
+        "te" to "Telugu · తెలుగు",
+        "or" to "Odia · ଓଡ଼ିଆ",
+        "bn" to "Bengali · বাংলা"
+    )
+
+    val currentSpeakingName = allSupportedLanguages.firstOrNull { it.first == controller.ui.voiceSettings.mySpeakingLanguage }?.second ?: "English"
+    val currentListeningName = allSupportedLanguages.firstOrNull { it.first == controller.ui.voiceSettings.myListeningLanguage }?.second ?: "Hindi · हिन्दी"
 
     Scaffold(topBar = { VoiceLinkTopBar("Settings", onBack) }) { inset ->
         LazyColumn(Modifier.padding(inset).padding(horizontal = ScreenPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                Text("Preferences & Engine Configuration", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
+                Text("Multilingual & Voice Translation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Blue)
+                Text("Configure your speaking and listening languages for real-time offline translation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
             }
-            item { InfoCard("Spoken Language", controller.ui.language) { navigate(Route.Language) } }
+            item {
+                InfoCard("My Speaking Language", currentSpeakingName) {
+                    showSpeakingLangDialog = true
+                }
+            }
+            item {
+                InfoCard("My Listening Language (Receiver)", currentListeningName) {
+                    showListeningLangDialog = true
+                }
+            }
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Offline Auto-Translate", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Automatically translate incoming voice messages into $currentListeningName",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = controller.ui.voiceSettings.autoTranslateEnabled,
+                            onCheckedChange = { controller.toggleAutoTranslate(it) }
+                        )
+                    }
+                }
+            }
+            item {
+                InfoCard("Offline Translation Workbench", "Interactive translator, latency tester & model memory") {
+                    navigate(Route.TranslationDebug)
+                }
+            }
+            item {
+                Spacer(Modifier.height(4.dp))
+                Text("Preferences & Engine Configuration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+            }
             item {
                 InfoCard("Communication Mode", controller.ui.mode) {
                     controller.chooseMode(if (controller.ui.mode == "Push-to-Talk") "Always-Listening" else "Push-to-Talk")
@@ -876,6 +952,74 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("TTS Debug & Benchmark", "Test offline speech synthesis, RTF, and playback") { navigate(Route.TTSDebug) } }
             item { InfoCard("Help & About", "Architecture details & offline protocols") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }
         }
+    }
+
+    if (showSpeakingLangDialog) {
+        AlertDialog(
+            onDismissRequest = { showSpeakingLangDialog = false },
+            title = { Text("Select Your Speaking Language") },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(allSupportedLanguages) { (code, name) ->
+                        val selected = code == controller.ui.voiceSettings.mySpeakingLanguage
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    controller.setSpeakingLanguage(code)
+                                    showSpeakingLangDialog = false
+                                },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                name,
+                                modifier = Modifier.padding(12.dp),
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) Blue else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showSpeakingLangDialog = false }) { Text("Done") }
+            }
+        )
+    }
+
+    if (showListeningLangDialog) {
+        AlertDialog(
+            onDismissRequest = { showListeningLangDialog = false },
+            title = { Text("Select Preferred Listening Language") },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(allSupportedLanguages) { (code, name) ->
+                        val selected = code == controller.ui.voiceSettings.myListeningLanguage
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    controller.setListeningLanguage(code)
+                                    showListeningLangDialog = false
+                                },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                name,
+                                modifier = Modifier.padding(12.dp),
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) Blue else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showListeningLangDialog = false }) { Text("Done") }
+            }
+        )
     }
 
     if (showVoiceDialog) {

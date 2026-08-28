@@ -51,6 +51,9 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // On-device translation model. Downloaded once per language pair, then used offline.
+    implementation("com.google.mlkit:translate:17.0.3")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

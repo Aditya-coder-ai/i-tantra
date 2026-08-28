@@ -20,6 +20,8 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
 
     private var speechRate: Float = 1.0f
     private var speechPitch: Float = 1.0f
+    var lastError: String? = null
+        private set
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
@@ -33,15 +35,35 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun speak(text: String, languageCode: String = "hi"): Boolean {
-        if (!_isReady.value || text.isBlank()) return false
+        if (!_isReady.value || text.isBlank()) {
+            lastError = "Text-to-speech is not ready"
+            return false
+        }
 
         val locale = getLocaleForCode(languageCode)
         val langResult = tts.setLanguage(locale)
         if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-            tts.setLanguage(Locale.getDefault())
+            // A locale-specific Hindi voice is not guaranteed, while a generic Hindi
+            // voice may still be installed. Try it before reporting an unavailable
+            // language. Never fall back to the phone's default (often English), as
+            // that makes a Hindi translation play with an English voice.
+            val genericLocale = Locale(locale.language)
+            val genericResult = if (genericLocale != locale) tts.setLanguage(genericLocale) else langResult
+            if (genericResult == TextToSpeech.LANG_MISSING_DATA || genericResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                lastError = "${locale.displayLanguage} voice is not installed on this device"
+                Log.e(TAG, "$lastError; refusing to fall back to the default voice")
+                return false
+            }
         }
+
+        lastError = null
         val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "iTantra_TTS_${System.currentTimeMillis()}")
-        return result == TextToSpeech.SUCCESS
+        if (result != TextToSpeech.SUCCESS) {
+            lastError = "Unable to start ${locale.displayLanguage} speech"
+            Log.e(TAG, lastError ?: "TTS speak failed")
+            return false
+        }
+        return true
     }
 
     fun stop() {
@@ -70,19 +92,10 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun getLocaleForCode(code: String): Locale {
-        val clean = code.trim().lowercase()
-        return when {
-            clean.startsWith("hi") -> Locale("hi", "IN")
-            clean.startsWith("gu") -> Locale("gu", "IN")
-            clean.startsWith("mr") -> Locale("mr", "IN")
-            clean.startsWith("kn") -> Locale("kn", "IN")
-            clean.startsWith("ml") -> Locale("ml", "IN")
-            clean.startsWith("ta") -> Locale("ta", "IN")
-            clean.startsWith("te") -> Locale("te", "IN")
-            clean.startsWith("bn") -> Locale("bn", "IN")
-            clean.startsWith("or") || clean.startsWith("od") -> Locale("or", "IN")
-            clean.startsWith("en") -> Locale.ENGLISH
-            else -> Locale("hi", "IN")
-        }
+        return com.itantra.offlinevoice.translation.SupportedLanguage.fromCode(code).toLocale()
+    }
+
+    companion object {
+        private const val TAG = "TtsEngine"
     }
 }

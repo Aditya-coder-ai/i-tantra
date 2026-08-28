@@ -41,7 +41,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -257,32 +260,50 @@ fun ProcessingSteps(state: CommunicationState) {
 }
 
 @Composable
-fun MessageBubble(message: VoiceMessage, onPlayAudio: (() -> Unit)? = null) {
+fun MessageBubble(
+    message: VoiceMessage,
+    onPlayAudio: (() -> Unit)? = null,
+    onPlayOriginal: (() -> Unit)? = null
+) {
+    var showOriginalText by remember { mutableStateOf(false) }
     val surface = when {
         message.emergency -> EmergencySurface
         message.isMine -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surface
     }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start
     ) {
-        if (message.emergency) Text("EMERGENCY ALERT", color = Emergency, style = MaterialTheme.typography.labelLarge)
+        if (message.emergency) Text("🚨 EMERGENCY ALERT", color = Emergency, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = surface),
             modifier = Modifier
-                .fillMaxWidth(.88f)
-                .then(if (onPlayAudio != null) Modifier.clickable { onPlayAudio() } else Modifier)
+                .fillMaxWidth(.92f)
         ) {
             Column(Modifier.padding(14.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    val langLabel = when {
+                        message.isMine -> "YOU · ${message.language}"
+                        message.isTranslated -> "${message.originalLanguage.uppercase()} ➔ ${(message.targetLanguage ?: message.language).uppercase()}"
+                        else -> "REMOTE · ${message.language.uppercase()}"
+                    }
                     Text(
-                        if (message.isMine) "YOU · ${message.language}" else "REMOTE · ${message.language}",
+                        langLabel,
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontWeight = FontWeight.Bold,
+                        color = if (message.isTranslated) Blue else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (message.hopCount > 0) {
+                    if (message.isTranslated && message.translationLatencyMs > 0) {
+                        Text(
+                            "⚡ ${message.translationLatencyMs}ms",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Success,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else if (message.hopCount > 0) {
                         Text(
                             "${message.hopCount} hop(s)",
                             style = MaterialTheme.typography.labelSmall,
@@ -290,20 +311,89 @@ fun MessageBubble(message: VoiceMessage, onPlayAudio: (() -> Unit)? = null) {
                         )
                     }
                 }
-                Spacer(Modifier.height(5.dp))
-                Text("“${message.text}”", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
+
+                // Prominently display primary (translated or original) message text
+                Text(
+                    "“${message.text}”",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+
+                // If translated, show original text box
+                if (message.isTranslated && message.originalText.isNotBlank() && message.originalText != message.text) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(8.dp)
+                    ) {
+                        Column {
+                            Text(
+                                "Original (${message.originalLanguage}):",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "“${message.originalText}”",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { onPlayAudio?.invoke() }
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.PlayArrow, "Play TTS speech", modifier = Modifier.size(18.dp), tint = Blue)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Tap to speak", style = MaterialTheme.typography.labelSmall, color = Blue)
-                    Spacer(Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Play primary TTS
+                        Box(
+                            modifier = Modifier
+                                .clickable { onPlayAudio?.invoke() }
+                                .background(Blue.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PlayArrow, "Play voice", modifier = Modifier.size(16.dp), tint = Blue)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (message.isTranslated) "Play ${(message.targetLanguage ?: message.language).substringBefore(' ')}" else "Play voice",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Blue,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Play original TTS if translated
+                        if (message.isTranslated && onPlayOriginal != null) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clickable { onPlayOriginal.invoke() }
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Original (${message.originalLanguage.take(3)})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
                     Text(
                         "${message.time}${if (message.delivered && message.isMine) "  ✓✓" else ""}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

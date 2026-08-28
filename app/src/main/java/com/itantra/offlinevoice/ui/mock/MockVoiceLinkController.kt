@@ -12,6 +12,8 @@ import androidx.compose.runtime.setValue
 import com.itantra.offlinevoice.audio.AudioChunk
 import com.itantra.offlinevoice.audio.AudioRecorder
 import com.itantra.offlinevoice.audio.RecordingState
+import com.itantra.offlinevoice.audio.debug.AudioDebugHelper
+import com.itantra.offlinevoice.audio.debug.AudioDiagnostics
 import com.itantra.offlinevoice.audio.stt.AndroidSpeechRecognizerEngine
 import com.itantra.offlinevoice.audio.stt.STTLanguage
 import com.itantra.offlinevoice.audio.stt.STTResult
@@ -25,6 +27,9 @@ import com.itantra.offlinevoice.communication.model.DeliveryState
 import com.itantra.offlinevoice.communication.model.PeerIdentity
 import com.itantra.offlinevoice.security.CryptoManager
 import com.itantra.offlinevoice.security.SecurityController
+import com.itantra.offlinevoice.text.MessageBuilder
+import com.itantra.offlinevoice.text.MessageClassifier
+import com.itantra.offlinevoice.text.MessagePriority
 import com.itantra.offlinevoice.text.MessageType
 import com.itantra.offlinevoice.text.TextProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -135,6 +140,21 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     private val vad = VoiceActivityDetector(listener = this)
     private val androidSpeechRecognizer = AndroidSpeechRecognizerEngine(context)
     private var isUsingAndroidSpeech = false
+
+    // Audio Diagnostics & Workbench state
+    val audioDebugHelper: AudioDebugHelper = AudioDebugHelper(context)
+    val vadEngine: VoiceActivityDetector get() = vad
+    val audioRecorderEngine: AudioRecorder get() = recorder
+    val voskEngine: VoskSttEngine get() = sttEngine
+    var lastCapturedRawAudio: ShortArray by mutableStateOf(ShortArray(0))
+        private set
+    var lastCapturedVadAudio: ShortArray by mutableStateOf(ShortArray(0))
+        private set
+    var lastDiagnostics: AudioDiagnostics by mutableStateOf(AudioDiagnostics())
+        private set
+    var isPlayingDebugAudio: Boolean by mutableStateOf(false)
+        private set
+    var bypassVadInStt: Boolean by mutableStateOf(false)
     
     // Recording timing
     private var recordingStartTimeMs: Long = 0L
@@ -204,6 +224,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         val sttLang = STTLanguage.fromCode(langCode)
 
         val voskAvailable = sttEngine.isModelAvailable(sttLang)
+        Log.i("VoiceLinkController", "★ startTalking: lang=$langCode, voskAvailable=$voskAvailable")
 
         if (voskAvailable) {
             isUsingAndroidSpeech = false
@@ -211,13 +232,16 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             if (!started) return
         } else {
             isUsingAndroidSpeech = true
+            Log.i("VoiceLinkController", "→ Using AndroidSpeechRecognizer (no Vosk model)")
             androidSpeechRecognizer.startListening(
                 language = sttLang,
                 onResult = { text ->
                     val duration = SystemClock.elapsedRealtime() - recordingStartTimeMs
+                    Log.i("VoiceLinkController", "✓ AndroidSpeech onResult: '$text' (${duration}ms)")
                     processRecognizedText(text, sttLang, duration)
                 },
                 onError = { errorMsg ->
+                    Log.w("VoiceLinkController", "✗ AndroidSpeech onError: '$errorMsg'")
                     update {
                         copy(
                             communicationState = CommunicationState.IDLE,
@@ -246,9 +270,10 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         }
         val duration = SystemClock.elapsedRealtime() - recordingStartTimeMs
 
-        if (duration < 250) {
+        if (duration < 300) {
             if (isUsingAndroidSpeech) {
-                androidSpeechRecognizer.stopListening()
+                // Too short — cancel recognition entirely
+                recognizerCancel()
             } else {
                 recorder.stopRecording()
                 vad.reset()
@@ -256,7 +281,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             update {
                 copy(
                     communicationState = CommunicationState.IDLE,
-                    lastMessage = "Hold button while speaking",
+                    lastMessage = "Hold button longer while speaking",
                     isTranscribing = false,
                     recordingDurationMs = 0L
                 )
@@ -274,25 +299,44 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         }
 
         if (isUsingAndroidSpeech) {
-            androidSpeechRecognizer.stopListening()
+            // Give the SpeechRecognizer a moment to finish processing before
+            // sending the stopListening signal. stopListening() tells the service
+            // "the user stopped speaking, finalize results" — it does NOT cancel.
+            scope.launch {
+                delay(500)
+                androidSpeechRecognizer.stopListening()
+            }
         } else {
             recorder.stopRecording()
+            val rawAudio = recorder.getRawRecordedAudio()
+            lastCapturedRawAudio = rawAudio
+            if (rawAudio.isNotEmpty()) {
+                lastDiagnostics = audioDebugHelper.analyzePcmBuffer(rawAudio, 16000)
+            }
             vad.flush()
         }
 
-        // Fallback safeguard: if recognizer does not produce speech within 6s, reset gracefully to IDLE
+        // Fallback safeguard: if recognizer does not produce speech within 10s, reset gracefully
         scope.launch {
-            delay(6000)
+            delay(10000)
             if (ui.communicationState == CommunicationState.PROCESSING && ui.isTranscribing) {
+                Log.w("VoiceLinkController", "Safeguard timeout: no result after 10s, resetting to IDLE")
                 update {
                     copy(
                         communicationState = CommunicationState.IDLE,
-                        lastMessage = "No speech detected.",
+                        lastMessage = "Speech recognition timed out. Try again.",
                         isTranscribing = false
                     )
                 }
             }
         }
+    }
+
+    /** Cancel recognition without waiting for results. */
+    private fun recognizerCancel() {
+        try {
+            androidSpeechRecognizer.destroy()
+        } catch (_: Exception) {}
     }
 
     override fun onAudioChunk(chunk: AudioChunk) {
@@ -316,13 +360,23 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     }
 
     override fun onSpeechEnd(segment: SpeechSegment) {
+        lastCapturedVadAudio = segment.samples
         val langCode = getLangCode()
         val sttLang = STTLanguage.fromCode(langCode)
-        val durationMs = (segment.samples.size.toFloat() / 16000 * 1000).toLong()
+
+        // Select either complete raw unsegmented audio (if VAD bypass is enabled) or VAD segment
+        val audioSamplesToTranscribe = if (bypassVadInStt && lastCapturedRawAudio.isNotEmpty()) {
+            Log.i("VoiceLinkController", "Bypassing VAD: using 100% raw contiguous recording (${lastCapturedRawAudio.size} samples)")
+            lastCapturedRawAudio
+        } else {
+            segment.samples
+        }
+
+        val durationMs = (audioSamplesToTranscribe.size.toFloat() / 16000 * 1000).toLong()
 
         val initSuccess = sttEngine.initialize(sttLang)
         val text = if (initSuccess) {
-            sttEngine.transcribe(segment.samples).text
+            sttEngine.transcribe(audioSamplesToTranscribe).text
         } else {
             ""
         }
@@ -340,10 +394,84 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         }
     }
 
+    fun playLastRecordedAudio(onComplete: () -> Unit = {}) {
+        val audioToPlay = if (lastCapturedRawAudio.isNotEmpty()) lastCapturedRawAudio else lastCapturedVadAudio
+        if (audioToPlay.isEmpty()) {
+            onComplete()
+            return
+        }
+        isPlayingDebugAudio = true
+        audioDebugHelper.playRawPcmAudio(audioToPlay, 16000) {
+            isPlayingDebugAudio = false
+            onComplete()
+        }
+    }
+
+    fun stopDebugAudioPlayback() {
+        audioDebugHelper.stopAudioPlayback()
+        isPlayingDebugAudio = false
+    }
+
+    fun runSttOnRawAudio(language: STTLanguage): STTResult {
+        val audio = if (lastCapturedRawAudio.isNotEmpty()) lastCapturedRawAudio else lastCapturedVadAudio
+        if (audio.isEmpty()) return STTResult("No recorded audio in memory", language, 0f, 0, 0)
+        val initSuccess = sttEngine.initialize(language)
+        return if (initSuccess) {
+            sttEngine.transcribe(audio)
+        } else {
+            STTResult("Vosk offline model for ${language.code} not found in storage", language, 0f, 0, 0)
+        }
+    }
+
+    fun runSttOnVadSegment(language: STTLanguage): STTResult {
+        if (lastCapturedVadAudio.isEmpty()) return STTResult("No VAD segment captured", language, 0f, 0, 0)
+        val initSuccess = sttEngine.initialize(language)
+        return if (initSuccess) {
+            sttEngine.transcribe(lastCapturedVadAudio)
+        } else {
+            STTResult("Vosk offline model for ${language.code} not found in storage", language, 0f, 0, 0)
+        }
+    }
+
+    fun runSttOnReferencePhrase(phrase: String, language: STTLanguage): STTResult {
+        val referenceSamples = audioDebugHelper.synthesizeReferenceSpeechAudio(phrase, 16000)
+        val initSuccess = sttEngine.initialize(language)
+        return if (initSuccess) {
+            sttEngine.transcribe(referenceSamples)
+        } else {
+            STTResult("Vosk offline model for ${language.code} not found in storage", language, 0f, 0, 0)
+        }
+    }
+
+    fun saveLastRecordingToWav(): String? {
+        val samples = if (lastCapturedRawAudio.isNotEmpty()) lastCapturedRawAudio else lastCapturedVadAudio
+        if (samples.isEmpty()) return null
+        val dir = java.io.File(context.getExternalFilesDir(null) ?: context.filesDir, "debug_wavs")
+        val file = java.io.File(dir, "mic_debug_${System.currentTimeMillis()}.wav")
+        val success = audioDebugHelper.saveToWavFile(file, samples, 16000)
+        return if (success) file.absolutePath else null
+    }
+
     private fun processRecognizedText(text: String, sttLang: STTLanguage, durationMs: Long) {
         scope.launch {
+            Log.i("VoiceLinkController", "★ processRecognizedText called with text='$text', lang=${sttLang.code}, duration=${durationMs}ms")
+            val cleanedText = text.trim()
+            if (cleanedText.isBlank()) {
+                Log.w("VoiceLinkController", "✗ cleanedText is blank — showing 'no speech detected'")
+                update {
+                    copy(
+                        communicationState = CommunicationState.IDLE,
+                        lastMessage = "No speech detected. Hold button and speak clearly.",
+                        isTranscribing = false,
+                        transcribedText = ""
+                    )
+                }
+                return@launch
+            }
+            Log.i("VoiceLinkController", "✓ cleanedText='$cleanedText'")
+
             val sttResult = STTResult(
-                text = text,
+                text = cleanedText,
                 language = sttLang,
                 confidence = 0.95f,
                 processingTimeMs = 100L,
@@ -357,17 +485,16 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 conversationId = "conv_active",
                 senderId = "local_node"
             )
-            val processed = procResult.message ?: run {
-                update {
-                    copy(
-                        communicationState = CommunicationState.IDLE,
-                        lastMessage = "No speech detected.",
-                        isTranscribing = false,
-                        transcribedText = ""
-                    )
-                }
-                return@launch
-            }
+            val classification = MessageClassifier().classifyMessage(cleanedText)
+            val processed = procResult.message ?: MessageBuilder().build(
+                text = cleanedText,
+                language = sttLang.code,
+                conversationId = "conv_active",
+                senderId = "local_node",
+                classification = classification,
+                confidence = 0.95f,
+                processingTimeMs = 10L
+            )
 
             // Show transcribed text to the user before sending
             update {
@@ -491,7 +618,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 alias = ui.connectedDevice,
                 publicKey = ByteArray(32) { 0x42.toByte() }
             )
-            communicationManager.sendProcessedMessage(dummyRecipient, processed)
+            communicationManager.sendProcessedMessage(dummyRecipient, processed).launchIn(scope)
         }
     }
 

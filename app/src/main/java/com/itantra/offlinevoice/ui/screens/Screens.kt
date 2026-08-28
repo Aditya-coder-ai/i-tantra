@@ -64,6 +64,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.itantra.offlinevoice.R
 import com.itantra.offlinevoice.ui.Route
 import com.itantra.offlinevoice.ui.components.CardRadius
 import com.itantra.offlinevoice.ui.components.DeviceCard
@@ -99,7 +101,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 Icon(Icons.Default.NetworkWifi, null, tint = Color.White, modifier = Modifier.size(46.dp))
             }
             Spacer(Modifier.height(22.dp))
-            Text("VoiceLink (iTantra)", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge, color = Color.White)
             Text("Offline Multi-Hop Voice & Text Communication", style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(.8f))
             Spacer(Modifier.height(38.dp))
             CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
@@ -149,7 +151,7 @@ fun HomeScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit) 
     Scaffold(
         topBar = {
             VoiceLinkTopBar(
-                "VoiceLink",
+                title = stringResource(R.string.app_name),
                 trailing = {
                     IconButton(onClick = { navigate(Route.Settings) }) {
                         Icon(Icons.Default.Settings, "Settings")
@@ -654,6 +656,7 @@ fun SettingsScreen(controller: MockVoiceLinkController, navigate: (String) -> Un
             item { InfoCard("Security & encryption", "AES-256-GCM, paired devices, and sessions") { navigate(Route.SecurityStatus) } }
             item { InfoCard("Security debug workbench", "Packet inspector, tamper testing & benchmarks") { navigate(Route.SecurityDebug) } }
             item { InfoCard("Model & Hardware Diagnostics", "RAM, Battery, Relayed Packets") { navigate(Route.SystemStatus) } }
+            item { InfoCard("STT & Audio Pipeline Diagnostics", "Inspect mic PCM, playback raw audio, verify VAD & RTF") { navigate(Route.SttDiagnostics) } }
             item { InfoCard("Text Processing Debugger", "Inspect STT normalizer & classifier") { navigate(Route.TextProcessingDebug) } }
             item { InfoCard("TTS Debug & Benchmark", "Test offline speech synthesis, RTF, and playback") { navigate(Route.TTSDebug) } }
             item { InfoCard("Help & About", "Architecture details & offline protocols") { navigate(Route.About) }; Spacer(Modifier.height(18.dp)) }
@@ -785,7 +788,7 @@ fun SystemStatusScreen(controller: MockVoiceLinkController, onBack: () -> Unit) 
 fun AboutScreen(onBack: () -> Unit) {
     Scaffold(topBar = { VoiceLinkTopBar("Help & About", onBack) }) { inset ->
         Column(Modifier.padding(inset).padding(ScreenPadding).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("iTantra (VoiceLink)", style = MaterialTheme.typography.headlineMedium)
+            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
             Text("Offline Multi-Hop Voice & Text Communication System", style = MaterialTheme.typography.bodyLarge, color = Blue)
             InfoCard("Architecture", "Audio Capture → VAD → On-Device STT → Text Processing → E2EE Envelope → Radio Multi-Hop Mesh → Decryption → On-Device TTS.")
             InfoCard("Offline Guarantee", "Operates entirely without internet, cellular data, cloud APIs, or online servers.")

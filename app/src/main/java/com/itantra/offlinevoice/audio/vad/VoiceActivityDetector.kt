@@ -37,7 +37,18 @@ class VoiceActivityDetector(
         private set
 
     // Adaptive noise floor in dBFS (initialized to realistic ambient baseline)
-    private var noiseFloorDb = -55.0f
+    var noiseFloorDb = -55.0f
+        private set
+
+    // Diagnostic tracking for STT inspector workbench
+    var lastSpeechOnsetNanos: Long = 0L
+        private set
+    var lastSpeechEndNanos: Long = 0L
+        private set
+    var lastSegmentDurationMs: Long = 0L
+        private set
+    var lastSegmentSampleCount: Int = 0
+        private set
 
     // Consecutive frame counters
     private var voiceFrameCount = 0
@@ -212,6 +223,12 @@ class VoiceActivityDetector(
                 System.arraycopy(chunk, 0, flattened, offset, chunk.size)
                 offset += chunk.size
             }
+            val nowNanos = System.nanoTime()
+            lastSpeechOnsetNanos = speechStartTimestampNanos
+            lastSpeechEndNanos = nowNanos
+            lastSegmentSampleCount = totalAccumulatedSamples
+            lastSegmentDurationMs = (totalAccumulatedSamples * 1_000L) / config.sampleRateHz
+
             val segment = SpeechSegment(
                 samples = flattened,
                 sampleRateHz = config.sampleRateHz,

@@ -21,6 +21,7 @@ import com.itantra.offlinevoice.ui.screens.SecurityDebugScreen
 import com.itantra.offlinevoice.ui.screens.SecurityStatusScreen
 import com.itantra.offlinevoice.ui.screens.SettingsScreen
 import com.itantra.offlinevoice.ui.screens.SplashScreen
+import com.itantra.offlinevoice.ui.screens.SttDiagnosticsScreen
 import com.itantra.offlinevoice.ui.screens.SystemStatusScreen
 import com.itantra.offlinevoice.ui.screens.TextProcessingDebugScreen
 import com.itantra.offlinevoice.ui.screens.TTSDebugScreen
@@ -44,6 +45,7 @@ object Route {
     const val TrustedDevices = "trusted_devices"
     const val SecurityDebug = "security_debug"
     const val TTSDebug = "tts_debug"
+    const val SttDiagnostics = "stt_diagnostics"
 }
 
 @Composable
@@ -70,5 +72,6 @@ fun VoiceLinkApp() {
         composable(Route.TrustedDevices) { TrustedDevicesScreen(securityController) { navController.popBackStack() } }
         composable(Route.SecurityDebug) { SecurityDebugScreen(securityController) { navController.popBackStack() } }
         composable(Route.TTSDebug) { TTSDebugScreen { navController.popBackStack() } }
+        composable(Route.SttDiagnostics) { SttDiagnosticsScreen(controller) { navController.popBackStack() } }
     }
 }

@@ -129,12 +129,16 @@ class VoskSttEngine(private val context: Context) : STTEngine {
         }
 
         val audioDurationMs = (samples.size.toFloat() / 16000 * 1000).toLong()
+        val processingTimeMs = endTime - startTime
+        val rtf = if (audioDurationMs > 0) processingTimeMs.toFloat() / audioDurationMs else 0f
+
+        Log.i("VoskStt", "STT Result: samples=${samples.size}, audioDuration=${audioDurationMs}ms, procTime=${processingTimeMs}ms, RTF=${"%.2f".format(rtf)}, lang=${currentLanguage?.code}, text='$text'")
 
         return STTResult(
             text = text,
             language = currentLanguage ?: STTLanguage.ENGLISH,
             confidence = if (text.isNotBlank()) 0.95f else 0.0f,
-            processingTimeMs = endTime - startTime,
+            processingTimeMs = processingTimeMs,
             audioDurationMs = audioDurationMs
         )
     }

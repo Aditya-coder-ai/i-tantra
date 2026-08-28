@@ -10,41 +10,39 @@ package com.itantra.offlinevoice.text
  * Thread-safe: all state is accessed under the intrinsic lock.
  */
 class MessageDeduplicator(
-    private val maxHistory: Int = 64
+    private val debounceWindowMs: Long = 1500L
 ) {
-    /** Tracks recent final texts with their assigned message IDs. */
-    private val recentFinals = LinkedHashMap<String, String>(maxHistory, 0.75f, true)
+    private var lastText: String = ""
+    private var lastTimestampMs: Long = 0L
 
     /**
-     * Returns `true` if [text] has already been processed as a final result.
-     *
-     * Partial results (`isFinal == false`) are never considered duplicates — they
-     * must be gated out by the caller before reaching message creation.
+     * Returns `true` if [text] is identical to the text processed within the last [debounceWindowMs] ms.
+     * Prevents duplicate callbacks from the same audio stream while allowing repeated messages.
      */
     @Synchronized
     fun isDuplicate(text: String, isFinal: Boolean): Boolean {
         if (!isFinal) return false
         val normalized = text.trim().lowercase()
-        return recentFinals.containsKey(normalized)
+        val now = System.currentTimeMillis()
+        if (normalized.isNotEmpty() && normalized == lastText && (now - lastTimestampMs) < debounceWindowMs) {
+            return true
+        }
+        return false
     }
 
     /**
-     * Records a successfully processed final message so future duplicates are detected.
+     * Records a successfully processed final message.
      */
     @Synchronized
     fun recordProcessed(messageId: String, text: String) {
-        val normalized = text.trim().lowercase()
-        recentFinals[normalized] = messageId
-        // Evict oldest entries when capacity is exceeded
-        while (recentFinals.size > maxHistory) {
-            val oldest = recentFinals.keys.iterator().next()
-            recentFinals.remove(oldest)
-        }
+        lastText = text.trim().lowercase()
+        lastTimestampMs = System.currentTimeMillis()
     }
 
-    /** Clears all deduplication history (e.g. on conversation reset). */
+    /** Clears all deduplication history. */
     @Synchronized
     fun reset() {
-        recentFinals.clear()
+        lastText = ""
+        lastTimestampMs = 0L
     }
 }

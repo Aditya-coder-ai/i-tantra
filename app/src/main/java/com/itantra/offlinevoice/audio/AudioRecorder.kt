@@ -29,9 +29,25 @@ class AudioRecorder(
     private val lock = Object()
     private val levelAnalyzer = AudioLevelAnalyzer()
 
+    // Accumulates all raw PCM samples captured during a recording session for debug playback/bypassing VAD
+    private val rawSessionBuffer = ArrayList<ShortArray>()
+    private var rawSessionTotalSamples = 0
+
     @Volatile
     var state: RecordingState = RecordingState.IDLE
         private set
+
+    /** Returns a copy of the complete contiguous raw PCM audio captured in the last recording session. */
+    fun getRawRecordedAudio(): ShortArray = synchronized(lock) {
+        if (rawSessionTotalSamples == 0 || rawSessionBuffer.isEmpty()) return ShortArray(0)
+        val combined = ShortArray(rawSessionTotalSamples)
+        var offset = 0
+        for (chunk in rawSessionBuffer) {
+            System.arraycopy(chunk, 0, combined, offset, chunk.size)
+            offset += chunk.size
+        }
+        combined
+    }
 
     /** True once the capture thread has released the system microphone resource. */
     val isMicrophoneReleased: Boolean
@@ -96,6 +112,12 @@ class AudioRecorder(
             reportErrorLocked("Microphone permission was rejected by the system.")
             return false
         }
+
+        // Clear debug session accumulator
+        rawSessionBuffer.clear()
+        rawSessionTotalSamples = 0
+
+        Log.i(TAG, "AudioRecord initialized: sampleRate=${recorder.sampleRate}Hz, channels=${recorder.channelCount}, encoding=${config.encoding}, bufferBytes=$bufferBytes")
 
         // AudioRecord retains its API-required internal buffer; reads stay at a VAD-friendly 20 ms.
         val readBuffer = ShortArray(config.chunkSamples)
@@ -192,6 +214,14 @@ class AudioRecorder(
                     val now = System.nanoTime()
                     chunk.sampleCount = read
                     chunk.timestampNanos = now
+
+                    // Strictly slice read buffer and accumulate continuous raw stream for debug inspection
+                    val exactSlice = buffer.copyOfRange(0, read)
+                    synchronized(lock) {
+                        rawSessionBuffer.add(exactSlice)
+                        rawSessionTotalSamples += read
+                    }
+
                     listener.onAudioChunk(chunk)
 
                     // UI metering at 10 Hz avoids flooding the main thread.

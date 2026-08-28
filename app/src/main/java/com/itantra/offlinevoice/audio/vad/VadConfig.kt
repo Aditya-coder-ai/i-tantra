@@ -22,8 +22,8 @@ data class VadConfig(
     val minZcr: Float = 0.01f,
     val maxZcr: Float = 0.65f,
     val speechOnsetFrames: Int = 3,
-    val speechHangoverFrames: Int = 40,
-    val preRollFrames: Int = 15,
+    val speechHangoverFrames: Int = 30,
+    val preRollFrames: Int = 25,
     val maxUtteranceMs: Long = 30_000L
 ) {
     val chunkSamples: Int get() = sampleRateHz * chunkDurationMs / 1_000

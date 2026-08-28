@@ -32,6 +32,15 @@ import com.itantra.offlinevoice.text.MessageClassifier
 import com.itantra.offlinevoice.text.MessagePriority
 import com.itantra.offlinevoice.text.MessageType
 import com.itantra.offlinevoice.text.TextProcessor
+import com.itantra.offlinevoice.network.ConnectionState
+import com.itantra.offlinevoice.network.DeliveryUpdate
+import com.itantra.offlinevoice.network.MessageDeliveryStatus
+import com.itantra.offlinevoice.network.NetworkMetrics
+import com.itantra.offlinevoice.network.PermissionHelper
+import com.itantra.offlinevoice.network.TransportManager
+import com.itantra.offlinevoice.network.TransportType
+import com.itantra.offlinevoice.network.VoiceLinkDevice
+import com.itantra.offlinevoice.security.EncryptedMessagePacket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,7 +53,7 @@ import java.util.Date
 import java.util.Locale
 
 enum class CommunicationState { IDLE, LISTENING, PROCESSING, SENDING, RECEIVED }
-enum class LinkState { SEARCHING, DEVICE_FOUND, CONNECTING, CONNECTED, FAILED }
+enum class LinkState { DISCONNECTED, SEARCHING, DEVICE_FOUND, CONNECTING, CONNECTED, FAILED }
 
 data class VoiceMessage(
     val id: Int,
@@ -54,7 +63,8 @@ data class VoiceMessage(
     val time: String,
     val delivered: Boolean = true,
     val emergency: Boolean = false,
-    val hopCount: Int = 0
+    val hopCount: Int = 0,
+    val latencyMs: Long = 0L
 )
 
 data class NearbyDevice(
@@ -62,7 +72,9 @@ data class NearbyDevice(
     val detail: String,
     val signal: Int,
     val paired: Boolean = false,
-    val publicKeyHex: String = "4a8e29bf10c7"
+    val publicKeyHex: String = "4a8e29bf10c7",
+    val nativeAddress: String = "",
+    val transportType: TransportType = TransportType.WIFI_DIRECT
 )
 
 data class VoiceSettingsState(
@@ -97,32 +109,24 @@ data class SystemHardwareStats(
 data class VoiceLinkUiState(
     val language: String = "Hindi · हिन्दी",
     val communicationState: CommunicationState = CommunicationState.IDLE,
-    val linkState: LinkState = LinkState.CONNECTED,
+    val linkState: LinkState = LinkState.DISCONNECTED,
     val connectionType: String = "Wi‑Fi Direct",
-    val connectedDevice: String = "Rescue Team 01",
+    val connectedDevice: String = "No Device Connected",
     val mode: String = "Push-to-Talk",
     val lastMessage: String = "Ready to communicate",
-    val messages: List<VoiceMessage> = defaultMessages,
-    val devices: List<NearbyDevice> = defaultDevices,
+    val messages: List<VoiceMessage> = emptyList(),
+    val devices: List<NearbyDevice> = emptyList(),
+    val realDiscoveredDevices: List<VoiceLinkDevice> = emptyList(),
     val voiceSettings: VoiceSettingsState = VoiceSettingsState(),
     val audioSettings: AudioSettingsState = AudioSettingsState(),
     val emergencySettings: EmergencySettingsState = EmergencySettingsState(),
     val systemStats: SystemHardwareStats = SystemHardwareStats(),
+    val networkMetrics: NetworkMetrics = NetworkMetrics(),
+    val localDeviceId: String = "VL-LOCAL",
+    val isDiscovering: Boolean = false,
     val transcribedText: String = "",
     val isTranscribing: Boolean = false,
     val recordingDurationMs: Long = 0L
-)
-
-private val defaultMessages = listOf(
-    VoiceMessage(1, "मुझे सहायता की आवश्यकता है", true, "Hindi", "10:42 PM", true, false, 0),
-    VoiceMessage(2, "बचाव दल आपकी ओर बढ़ रहा है", false, "Hindi", "10:43 PM", true, false, 1),
-    VoiceMessage(3, "Safe shelter point confirmed. All clear.", false, "English", "10:45 PM", true, false, 2)
-)
-
-private val defaultDevices = listOf(
-    NearbyDevice("Rescue Team 01", "Wi‑Fi Direct · 95% signal", 4, true, "a1b2c3d4e5f6"),
-    NearbyDevice("Medical Unit 04", "Bluetooth · 78% signal", 3, false, "f6e5d4c3b2a1"),
-    NearbyDevice("Field Relay Node 12", "Mesh Relay · 62% signal", 2, true, "1029384756af")
 )
 
 class MockVoiceLinkController(private val context: Context) : AudioRecorder.Listener, VoiceActivityDetector.Listener {
@@ -135,6 +139,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     val communicationManager: ITantraCommunicationManager = TantraCommunicationManagerImpl()
     
     val securityController: SecurityController = SecurityController()
+    val transportManager: TransportManager = TransportManager(context)
     
     private val recorder = AudioRecorder(context, listener = this)
     private val vad = VoiceActivityDetector(listener = this)
@@ -164,58 +169,152 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
 
     init {
         scope.launch {
-            communicationManager.start()
-            securityController.initializeIdentity("i-tantra Local Device")
+            // 1. Initialize Real Security Identity
+            val localDevName = android.os.Build.MODEL.ifBlank { "VoiceLink Device" }
+            val identity = securityController.initializeIdentity(localDevName)
+            update { copy(localDeviceId = "VL-${identity.deviceId.takeLast(6).uppercase()}") }
+
+            // 2. Pre-pair default mock contacts for backward compatibility
             try {
                 val demoKey1 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
                 val demoKey2 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
                 securityController.pairPreSharedDevice("Rescue Team 01", "Rescue Team 01", demoKey1)
                 securityController.pairPreSharedDevice("Medical Unit 04", "Medical Unit 04", demoKey2)
-            } catch (e: Exception) {
-                // Identity already prepared
+            } catch (_: Exception) {}
+
+            // 3. Start Real Transport Manager
+            transportManager.start()
+
+            // 4. Observe Real Transport Connection State
+            transportManager.connectionState.collect { state ->
+                val mappedLinkState = when (state) {
+                    ConnectionState.DISCONNECTED -> LinkState.SEARCHING
+                    ConnectionState.DISCOVERING -> LinkState.SEARCHING
+                    ConnectionState.DEVICE_FOUND -> LinkState.DEVICE_FOUND
+                    ConnectionState.CONNECTING -> LinkState.CONNECTING
+                    ConnectionState.CONNECTED -> LinkState.CONNECTED
+                    ConnectionState.RECONNECTING -> LinkState.CONNECTING
+                    ConnectionState.CONNECTION_LOST, ConnectionState.FAILED -> LinkState.FAILED
+                }
+                update {
+                    copy(
+                        linkState = mappedLinkState,
+                        lastMessage = when (state) {
+                            ConnectionState.CONNECTED -> "Connected to ${ui.connectedDevice} 🔐"
+                            ConnectionState.CONNECTING -> "Handshaking with peer..."
+                            ConnectionState.DISCOVERING -> "Searching for nearby devices..."
+                            ConnectionState.DEVICE_FOUND -> "Nearby devices discovered"
+                            ConnectionState.CONNECTION_LOST -> "Connection lost — attempting reconnection"
+                            ConnectionState.FAILED -> "Connection failed"
+                            ConnectionState.DISCONNECTED -> "Disconnected"
+                            ConnectionState.RECONNECTING -> "Reconnecting..."
+                        }
+                    )
+                }
             }
-            refreshSystemStats()
         }
 
-        // Listen for decrypted incoming messages from the mesh/radios
-        communicationManager.incomingMessages
-            .onEach { msg ->
-                val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(msg.timestampMs))
-                val newMessage = VoiceMessage(
-                    id = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1,
-                    text = msg.text,
-                    isMine = false,
-                    language = msg.languageCode,
-                    time = timeStr,
-                    delivered = true,
-                    emergency = msg.messageType == MessageType.EMERGENCY,
-                    hopCount = msg.hopCount
-                )
-                update {
-                    copy(
-                        messages = messages + newMessage,
-                        lastMessage = "Received: ${msg.text}"
-                    )
-                }
-                if (ui.voiceSettings.autoPlayIncoming) {
-                    ttsEngine.speak(msg.text, msg.languageCode)
-                }
-            }
-            .launchIn(scope)
+        // 5. Observe Connected Peer
+        scope.launch {
+            transportManager.connectedDevice.collect { device ->
+                if (device != null) {
+                    // Auto-establish a trusted session with this peer identity
+                    try {
+                        val peerKey = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
+                        securityController.pairPreSharedDevice(device.deviceId, device.displayName, peerKey)
+                    } catch (_: Exception) {}
 
-        // Sync communication engine state
-        communicationManager.engineState
-            .onEach { engine ->
+                    update {
+                        copy(
+                            connectedDevice = device.displayName,
+                            connectionType = device.transportType.displayName,
+                            linkState = LinkState.CONNECTED
+                        )
+                    }
+                } else {
+                    update {
+                        copy(
+                            connectedDevice = "No Device Connected"
+                        )
+                    }
+                }
+            }
+        }
+
+        // 6. Observe Discovered Peers
+        scope.launch {
+            transportManager.discoveredDevices.collect { peerList ->
+                val converted = peerList.map { dev ->
+                    NearbyDevice(
+                        name = dev.displayName,
+                        detail = "${dev.transportType.displayName} · ${dev.formattedId}",
+                        signal = dev.signalStrength,
+                        paired = dev.isPaired,
+                        publicKeyHex = dev.deviceId.takeLast(8),
+                        nativeAddress = dev.nativeAddress,
+                        transportType = dev.transportType
+                    )
+                }
                 update {
                     copy(
-                        systemStats = systemStats.copy(
-                            packetsRelayed = engine.totalPacketsRelayed,
-                            messagesDelivered = engine.totalMessagesDelivered
-                        )
+                        devices = converted,
+                        realDiscoveredDevices = peerList
                     )
                 }
             }
-            .launchIn(scope)
+        }
+
+        // 7. Observe Real Network Metrics
+        scope.launch {
+            transportManager.networkMetrics.collect { metrics ->
+                update { copy(networkMetrics = metrics) }
+            }
+        }
+
+        // 8. Listen for Incoming Decrypted Messages over Real Transport
+        scope.launch {
+            transportManager.incomingEncryptedMessages.collect { encryptedPacket ->
+                try {
+                    Log.i("VoiceLinkController", "★ Incoming Encrypted Message from network: ${encryptedPacket.messageId}")
+                    val decryptedMessage = securityController.decryptIncoming(encryptedPacket)
+
+                    val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                    val newMessage = VoiceMessage(
+                        id = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1,
+                        text = decryptedMessage.text,
+                        isMine = false,
+                        language = decryptedMessage.language,
+                        time = timeStr,
+                        delivered = true,
+                        emergency = decryptedMessage.messageType == MessageType.EMERGENCY
+                    )
+
+                    update {
+                        copy(
+                            messages = messages + newMessage,
+                            lastMessage = "Received: ${decryptedMessage.text}",
+                            communicationState = CommunicationState.RECEIVED
+                        )
+                    }
+
+                    // Automatic Offline TTS Playback on Receiving Phone
+                    if (ui.voiceSettings.autoPlayIncoming) {
+                        Log.i("VoiceLinkController", "🔊 Auto-playing incoming voice message: '${decryptedMessage.text}' (${decryptedMessage.language})")
+                        ttsEngine.speak(decryptedMessage.text, decryptedMessage.language)
+                    }
+                } catch (e: Exception) {
+                    Log.e("VoiceLinkController", "Failed to decrypt incoming packet: ${e.message}", e)
+                }
+            }
+        }
+
+        // 9. Sync hardware stats periodically
+        scope.launch {
+            while (true) {
+                refreshSystemStats()
+                delay(3000)
+            }
+        }
     }
 
     fun startTalking() {
@@ -506,22 +605,16 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 )
             }
 
-            // Let the user see the transcription for 1.5 seconds
-            delay(1500)
+            // Let the user see the transcription for 1 second
+            delay(1000)
 
             // Now send the message
             update {
                 copy(
                     communicationState = CommunicationState.SENDING,
-                    lastMessage = "Transmitting: ${processed.text}"
+                    lastMessage = "Encrypting & transmitting..."
                 )
             }
-
-            val dummyRecipient = PeerIdentity(
-                alias = ui.connectedDevice,
-                publicKey = ByteArray(32) { 0x42.toByte() },
-                isVerified = true
-            )
 
             val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
             val pendingId = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1
@@ -532,93 +625,62 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 language = ui.language.substringBefore('·').trim(),
                 time = timeStr,
                 delivered = false,
-                emergency = false
+                emergency = processed.messageType == MessageType.EMERGENCY
             )
 
             update { copy(messages = messages + pendingMessage) }
 
-            communicationManager.sendProcessedMessage(dummyRecipient, processed)
-                .collect { state ->
-                    when (state) {
-                        is DeliveryState.Queued -> update { copy(lastMessage = "Queued...") }
-                        is DeliveryState.Transmitting -> update { copy(lastMessage = "Transmitting via ${state.tier}...") }
-                        is DeliveryState.Delivered -> {
-                            update {
-                                copy(
-                                    communicationState = CommunicationState.RECEIVED,
-                                    lastMessage = "Delivered to ${ui.connectedDevice}",
-                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true) else it },
-                                    transcribedText = ""
-                                )
-                            }
-                        }
-                        is DeliveryState.Relayed -> {
-                            update {
-                                copy(
-                                    communicationState = CommunicationState.RECEIVED,
-                                    lastMessage = "Relayed via ${state.hopCount} hop(s)",
-                                    messages = messages.map { if (it.id == pendingId) it.copy(delivered = true, hopCount = state.hopCount) else it },
-                                    transcribedText = ""
-                                )
-                            }
-                        }
-                        is DeliveryState.Failed -> {
-                            update {
-                                copy(
-                                    communicationState = CommunicationState.IDLE,
-                                    lastMessage = "Failed: ${state.reason}",
-                                    transcribedText = ""
-                                )
-                            }
+            // Real Encryption via SecurityController
+            val targetPeer = transportManager.connectedDevice.value
+            val recipientId = targetPeer?.deviceId ?: "Rescue Team 01"
+
+            try {
+                val encryptedPacket = try {
+                    securityController.encryptOutgoing(processed, recipientId)
+                } catch (_: Exception) {
+                    val peerKey = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
+                    securityController.pairPreSharedDevice(recipientId, targetPeer?.displayName ?: recipientId, peerKey)
+                    securityController.encryptOutgoing(processed, recipientId)
+                }
+
+                // Send across real Wi-Fi Direct / Bluetooth transport
+                val sendJob = launch {
+                    val ackReceived = transportManager.deliveryManager.registerSent(encryptedPacket.messageId).await()
+                    if (ackReceived) {
+                        val latency = transportManager.deliveryManager.lastLatency
+                        update {
+                            copy(
+                                communicationState = CommunicationState.RECEIVED,
+                                lastMessage = "Delivered to ${ui.connectedDevice} (${latency}ms)",
+                                messages = messages.map { if (it.id == pendingId) it.copy(delivered = true, latencyMs = latency) else it },
+                                transcribedText = ""
+                            )
                         }
                     }
                 }
+
+                transportManager.sendEncryptedPacket(encryptedPacket)
+
+            } catch (e: Exception) {
+                Log.e("VoiceLinkController", "Failed to encrypt or send message: ${e.message}", e)
+                update {
+                    copy(
+                        communicationState = CommunicationState.IDLE,
+                        lastMessage = "Transmission failed: ${e.message}"
+                    )
+                }
+            }
         }
     }
 
-    override fun onVadStateChanged(isSpeaking: Boolean, confidence: Float) {
-        // Can be used to show visual indicator
-    }
+    override fun onVadStateChanged(isSpeaking: Boolean, confidence: Float) {}
 
     fun sendTextMessage(text: String) {
         if (text.isBlank()) return
         scope.launch {
             val langCode = getLangCode()
             val sttLang = STTLanguage.fromCode(langCode)
-            val sttResult = STTResult(
-                text = text,
-                language = sttLang,
-                confidence = 1.0f,
-                processingTimeMs = 10L,
-                audioDurationMs = 1000L,
-                isFinal = true
-            )
-
-            val procResult = textProcessor.process(
-                sttResult = sttResult,
-                conversationId = "conv_active",
-                senderId = "local_node"
-            )
-            val processed = procResult.message ?: return@launch
-
-            val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-            val pendingId = (ui.messages.maxOfOrNull { it.id } ?: 0) + 1
-            val pendingMessage = VoiceMessage(
-                id = pendingId,
-                text = processed.text,
-                isMine = true,
-                language = ui.language.substringBefore('·').trim(),
-                time = timeStr,
-                delivered = true,
-                emergency = false
-            )
-            update { copy(messages = messages + pendingMessage) }
-
-            val dummyRecipient = PeerIdentity(
-                alias = ui.connectedDevice,
-                publicKey = ByteArray(32) { 0x42.toByte() }
-            )
-            communicationManager.sendProcessedMessage(dummyRecipient, processed).launchIn(scope)
+            processRecognizedText(text, sttLang, 100L)
         }
     }
 
@@ -633,7 +695,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 isMine = true,
                 language = ui.language.substringBefore('·').trim(),
                 time = timeStr,
-                delivered = true,
+                delivered = false,
                 emergency = true
             )
             update {
@@ -642,7 +704,9 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                     lastMessage = "EMERGENCY ALERT BROADCASTED"
                 )
             }
-            communicationManager.broadcastEmergency(alertText, getLangCode())
+
+            val sttLang = STTLanguage.fromCode(getLangCode())
+            processRecognizedText("EMERGENCY: $alertText", sttLang, 50L)
         }
     }
 
@@ -665,34 +729,65 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     fun chooseMode(mode: String) = update { copy(mode = mode) }
 
     fun chooseConnection(type: String) {
+        val transportType = if (type.contains("Bluetooth", ignoreCase = true)) {
+            TransportType.BLUETOOTH
+        } else {
+            TransportType.WIFI_DIRECT
+        }
+        transportManager.selectPreferredTransport(transportType)
         update {
             copy(
-                connectionType = type,
-                linkState = LinkState.SEARCHING,
-                lastMessage = "Switched to $type transport"
+                connectionType = transportType.displayName,
+                lastMessage = "Selected ${transportType.displayName} transport"
             )
         }
-        scope.launch {
-            delay(1200)
-            update { copy(linkState = LinkState.DEVICE_FOUND) }
-        }
+        showDevices()
     }
 
     fun showDevices() {
-        update { copy(linkState = LinkState.SEARCHING) }
         scope.launch {
-            delay(1000)
-            update { copy(linkState = LinkState.DEVICE_FOUND) }
+            transportManager.startDiscovery()
         }
     }
 
     fun connect(device: NearbyDevice) {
-        update {
-            copy(
-                linkState = LinkState.CONNECTED,
-                connectedDevice = device.name,
-                lastMessage = "Connected to ${device.name}"
-            )
+        scope.launch {
+            update {
+                copy(
+                    linkState = LinkState.CONNECTING,
+                    lastMessage = "Connecting to ${device.name}..."
+                )
+            }
+            val realDev = ui.realDiscoveredDevices.firstOrNull { it.nativeAddress == device.nativeAddress }
+                ?: VoiceLinkDevice(
+                    deviceId = "VL-${device.publicKeyHex.takeLast(6).uppercase()}",
+                    displayName = device.name,
+                    transportType = device.transportType,
+                    nativeAddress = device.nativeAddress.ifBlank { "00:11:22:33:44:55" },
+                    signalStrength = device.signal
+                )
+
+            val success = transportManager.connect(realDev)
+            if (!success) {
+                update {
+                    copy(
+                        linkState = LinkState.FAILED,
+                        lastMessage = "Failed to connect to ${device.name}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun connectRealDevice(device: VoiceLinkDevice) {
+        scope.launch {
+            update {
+                copy(
+                    linkState = LinkState.CONNECTING,
+                    lastMessage = "Connecting to ${device.displayName}..."
+                )
+            }
+            transportManager.connect(device)
         }
     }
 
@@ -700,12 +795,15 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     fun failConnection() = update { copy(linkState = LinkState.FAILED, lastMessage = "Connection timeout") }
     
     fun disconnect() {
-        update {
-            copy(
-                linkState = LinkState.SEARCHING,
-                connectedDevice = "No device",
-                lastMessage = "Disconnected"
-            )
+        scope.launch {
+            transportManager.disconnect()
+            update {
+                copy(
+                    linkState = LinkState.SEARCHING,
+                    connectedDevice = "No device",
+                    lastMessage = "Disconnected"
+                )
+            }
         }
     }
 

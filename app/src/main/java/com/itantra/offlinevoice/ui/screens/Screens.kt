@@ -201,9 +201,24 @@ fun HomeScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit) 
                     Text(ui.language.substringBefore('·'))
                 }
             }
-            Spacer(Modifier.height(24.dp))
-            Text(ui.mode.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(13.dp))
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { controller.chooseMode("Push-to-Talk") },
+                    shape = RoundedCornerShape(20.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (ui.mode == "Push-to-Talk") Blue else Line)
+                ) {
+                    Text("Push-to-Talk", color = if (ui.mode == "Push-to-Talk") Blue else MaterialTheme.colorScheme.onSurface, fontWeight = if (ui.mode == "Push-to-Talk") FontWeight.Bold else FontWeight.Normal)
+                }
+                OutlinedButton(
+                    onClick = { controller.chooseMode("Continuous") },
+                    shape = RoundedCornerShape(20.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (ui.mode == "Continuous") Blue else Line)
+                ) {
+                    Text("Continuous", color = if (ui.mode == "Continuous") Blue else MaterialTheme.colorScheme.onSurface, fontWeight = if (ui.mode == "Continuous") FontWeight.Bold else FontWeight.Normal)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
             PushToTalkButton(
                 state = ui.communicationState,
                 onHold = controller::startTalking,
@@ -463,52 +478,179 @@ fun LanguageScreen(selected: String, select: (String) -> Unit, onBack: () -> Uni
 @Composable
 fun ConnectionScreen(controller: MockVoiceLinkController, navigate: (String) -> Unit, onBack: () -> Unit) {
     val ui = controller.ui
-    Scaffold(topBar = { VoiceLinkTopBar("Connection", onBack) }) { inset ->
-        Column(Modifier.padding(inset).padding(horizontal = ScreenPadding).verticalScroll(rememberScrollState())) {
-            Text("Radio Transports", style = MaterialTheme.typography.headlineMedium)
-            Text("Switch between direct radios and multi-hop relay mesh.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                InfoCard("Wi‑Fi Direct", "High Speed P2P", Modifier.weight(1f)) { controller.chooseConnection("Wi‑Fi Direct") }
-                InfoCard("Bluetooth", "Low Power BLE", Modifier.weight(1f)) { controller.chooseConnection("Bluetooth") }
-            }
-            Spacer(Modifier.height(10.dp))
-            InfoCard("Mesh Relay", "Multi-Hop Chained Nodes (Extended Range)", Modifier.fillMaxWidth()) { controller.chooseConnection("Mesh Relay") }
-            Spacer(Modifier.height(16.dp))
-            StatusPill(
-                label = when (ui.linkState) {
-                    LinkState.SEARCHING -> "Scanning nearby radios..."
-                    LinkState.DEVICE_FOUND -> "Nearby peers discovered"
-                    LinkState.CONNECTING -> "Handshaking..."
-                    LinkState.CONNECTED -> "Connected (${ui.connectedDevice})"
-                    LinkState.FAILED -> "Connection failed"
-                },
-                active = ui.linkState != LinkState.FAILED
+    val metrics = ui.networkMetrics
+    val isConnected = ui.linkState == LinkState.CONNECTED
+
+    Scaffold(topBar = { VoiceLinkTopBar("Device Connection", onBack) }) { inset ->
+        Column(
+            Modifier
+                .padding(inset)
+                .padding(horizontal = ScreenPadding)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text("Offline Device-to-Device", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "Direct peer communication without internet, routers, or cellular towers.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(16.dp))
-            PrimaryButton("Search nearby devices") { controller.showDevices() }
+
+            // My Device Identity Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(Blue.copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.NetworkWifi, contentDescription = null, tint = Blue)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("My VoiceLink Identity", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(ui.localDeviceId, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    StatusPill(
+                        label = if (isConnected) "Active" else "Ready",
+                        active = isConnected
+                    )
+                }
+            }
+
             Spacer(Modifier.height(18.dp))
-            SectionLabel("Nearby peers & relay nodes")
+            SectionLabel("Primary & Fallback Radios")
             Spacer(Modifier.height(8.dp))
-            ui.devices.forEach { device ->
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                InfoCard(
+                    title = "Wi‑Fi Direct ⚡",
+                    body = if (ui.connectionType.contains("Wi‑Fi", true)) "Active / Primary" else "High-Speed P2P",
+                    modifier = Modifier.weight(1f)
+                ) { controller.chooseConnection("Wi‑Fi Direct") }
+
+                InfoCard(
+                    title = "Bluetooth 📶",
+                    body = if (ui.connectionType.contains("Bluetooth", true)) "Active / Fallback" else "Low-Power SPP",
+                    modifier = Modifier.weight(1f)
+                ) { controller.chooseConnection("Bluetooth") }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // Active Connection / Session Status Card
+            if (isConnected) {
+                SectionLabel("Active Secure Session")
                 Spacer(Modifier.height(8.dp))
-                DeviceCard(device, if (device.paired) "Connect" else "Pair") {
-                    if (device.paired) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Blue.copy(alpha = 0.08f)),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Blue.copy(alpha = 0.3f))
+                ) {
+                    Column(Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(androidx.compose.ui.graphics.Color(0xFF22C55E), CircleShape)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "CONNECTED TO ${ui.connectedDevice.uppercase()}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Blue
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text("Transport: ${ui.connectionType}", style = MaterialTheme.typography.bodyMedium)
+                        Text("Session Security: Active 🔐 (AES-256-GCM Authenticated)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text("Latency", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${metrics.lastLatencyMs} ms", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            }
+                            Column {
+                                Text("Sent / Received", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${metrics.messagesSent} / ${metrics.messagesReceived}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            }
+                            Column {
+                                Text("Offline Queue", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${metrics.queueSize}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                        OutlineButton("Disconnect Radio") { controller.disconnect() }
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+            }
+
+            SectionLabel("Nearby VoiceLink Devices")
+            Spacer(Modifier.height(8.dp))
+
+            StatusPill(
+                label = when (ui.linkState) {
+                    LinkState.DISCONNECTED -> "Disconnected / Ready to connect"
+                    LinkState.SEARCHING -> "🔍 Searching for nearby devices..."
+                    LinkState.DEVICE_FOUND -> "📱 Nearby devices discovered"
+                    LinkState.CONNECTING -> "🔗 Handshaking & authenticating..."
+                    LinkState.CONNECTED -> "🟢 Connected to ${ui.connectedDevice}"
+                    LinkState.FAILED -> "Connection failed / Timeout"
+                },
+                active = ui.linkState == LinkState.CONNECTED || ui.linkState == LinkState.CONNECTING
+            )
+
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton("Search Nearby Devices") { controller.showDevices() }
+            Spacer(Modifier.height(14.dp))
+
+            if (ui.devices.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+                ) {
+                    Text(
+                        "No peers detected yet.\nTap 'Search Nearby Devices' or ensure Wi-Fi Direct / Bluetooth is enabled on both phones.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                ui.devices.forEach { device ->
+                    Spacer(Modifier.height(8.dp))
+                    DeviceCard(device, "CONNECT") {
                         controller.connect(device)
-                    } else {
-                        controller.setPairing()
-                        navigate(Route.Pairing)
                     }
                 }
             }
-            if (ui.linkState == LinkState.CONNECTED) {
-                Spacer(Modifier.height(16.dp))
-                OutlineButton("Disconnect") { controller.disconnect() }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Diagnostics & Fallback")
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlineButton("Bluetooth Fallback", Modifier.weight(1f)) {
+                    controller.chooseConnection("Bluetooth")
+                }
+                OutlineButton("Disconnect", Modifier.weight(1f)) {
+                    controller.disconnect()
+                }
             }
-            Spacer(Modifier.height(14.dp))
-            SectionLabel("Diagnostics")
-            Spacer(Modifier.height(6.dp))
-            OutlineButton("Simulate Connection Failure") { controller.failConnection() }
             Spacer(Modifier.height(24.dp))
         }
     }

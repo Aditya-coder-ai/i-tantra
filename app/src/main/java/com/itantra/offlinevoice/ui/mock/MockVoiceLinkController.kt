@@ -165,7 +165,7 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
     init {
         scope.launch {
             communicationManager.start()
-            securityController.initializeIdentity("VoiceLink Local Device")
+            securityController.initializeIdentity("i-tantra Local Device")
             try {
                 val demoKey1 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
                 val demoKey2 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)

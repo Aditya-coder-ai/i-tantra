@@ -1,5 +1,6 @@
 package com.itantra.offlinevoice.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import com.itantra.offlinevoice.R
 import com.itantra.offlinevoice.ui.Route
@@ -97,8 +99,12 @@ fun SplashScreen(onFinished: () -> Unit) {
     LaunchedEffect(Unit) { delay(1_100); onFinished() }
     Box(Modifier.fillMaxSize().background(Navy).clickable { onFinished() }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(92.dp).border(2.dp, Color.White.copy(.4f), CircleShape), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.NetworkWifi, null, tint = Color.White, modifier = Modifier.size(46.dp))
+            Box(Modifier.size(100.dp).background(Color.White.copy(.05f), CircleShape).border(2.dp, Color.White.copy(.4f), CircleShape), contentAlignment = Alignment.Center) {
+                Image(
+                    painter = painterResource(id = R.mipmap.ic_launcher_foreground),
+                    contentDescription = "Logo",
+                    modifier = Modifier.size(72.dp)
+                )
             }
             Spacer(Modifier.height(22.dp))
             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge, color = Color.White)
@@ -113,8 +119,9 @@ fun SplashScreen(onFinished: () -> Unit) {
 
 @Composable
 fun OnboardingScreen(onFinished: () -> Unit) {
+    val appName = stringResource(R.string.app_name)
     val pages = listOf(
-        Triple(Icons.Default.NetworkWifi, "Communicate without the internet", "VoiceLink turns speech into encrypted text and sends it peer-to-peer over Bluetooth, Wi-Fi Direct, and multi-hop Mesh."),
+        Triple(R.mipmap.ic_launcher_foreground, "Communicate without the internet", "$appName turns speech into encrypted text and sends it peer-to-peer over Bluetooth, Wi-Fi Direct, and multi-hop Mesh."),
         Triple(Icons.Default.Translate, "Speak in the language you know", "Choose from 10 Indian languages and English. On-device STT and TTS handle conversion with zero cloud dependency."),
         Triple(Icons.Default.Bolt, "Emergency Ready", "Hold Push-to-Talk to send, verify delivery receipts, and broadcast instant SOS alerts to all nearby nodes."),
     )
@@ -126,7 +133,12 @@ fun OnboardingScreen(onFinished: () -> Unit) {
         }
         Spacer(Modifier.weight(1f))
         Box(Modifier.size(152.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-            Icon(current.first, null, tint = Blue, modifier = Modifier.size(70.dp))
+            val icon = current.first
+            if (icon is androidx.compose.ui.graphics.vector.ImageVector) {
+                Icon(icon, null, tint = Blue, modifier = Modifier.size(70.dp))
+            } else if (icon is Int) {
+                Image(painterResource(icon), null, modifier = Modifier.size(100.dp))
+            }
         }
         Spacer(Modifier.height(38.dp))
         Text(current.second, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)

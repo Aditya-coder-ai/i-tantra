@@ -57,6 +57,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.itantra.offlinevoice.R
 import com.itantra.offlinevoice.security.AuthenticationFailedException
 import com.itantra.offlinevoice.security.EncryptedMessagePacket
 import com.itantra.offlinevoice.security.ReplayAttackException
@@ -332,7 +334,8 @@ fun TrustedDevicesScreen(
                             Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                             Spacer(Modifier.height(12.dp))
                             Text("No paired devices", style = MaterialTheme.typography.titleMedium)
-                            Text("Pair with another VoiceLink device to enable encrypted offline messaging.", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val appName = stringResource(R.string.app_name)
+                            Text("Pair with another $appName device to enable encrypted offline messaging.", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

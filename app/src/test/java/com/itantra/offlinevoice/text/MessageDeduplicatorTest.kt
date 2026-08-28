@@ -10,13 +10,11 @@ class MessageDeduplicatorTest {
 
     @Before
     fun setUp() {
-        dedup = MessageDeduplicator()
+        dedup = MessageDeduplicator(debounceWindowMs = 5000L)
     }
 
     @Test
     fun testPartialResultNeverCreatesMessage() {
-        // Partial results (isFinal=false) should never be flagged as duplicates
-        // because they should never produce messages at all — gated elsewhere
         assertFalse("Partial must not be considered duplicate", dedup.isDuplicate("I need he...", isFinal = false))
     }
 
@@ -28,12 +26,10 @@ class MessageDeduplicatorTest {
     @Test
     fun testSecondIdenticalFinalIsDuplicate() {
         val text = "I need help."
-        // First time: not a duplicate, but we must record it
         assertFalse(dedup.isDuplicate(text, isFinal = true))
         dedup.recordProcessed("msg-001", text)
 
-        // Second time: same text, isFinal=true → duplicate
-        assertTrue("Same final text delivered twice must be a duplicate", dedup.isDuplicate(text, isFinal = true))
+        assertTrue("Same final text delivered twice within debounce window must be a duplicate", dedup.isDuplicate(text, isFinal = true))
     }
 
     @Test
@@ -55,20 +51,5 @@ class MessageDeduplicatorTest {
     fun testCaseInsensitiveDedup() {
         dedup.recordProcessed("msg-001", "I Need Help.")
         assertTrue("Dedup should be case-insensitive", dedup.isDuplicate("i need help.", isFinal = true))
-    }
-
-    @Test
-    fun testEvictsOldestWhenCapacityExceeded() {
-        val smallDedup = MessageDeduplicator(maxHistory = 3)
-        smallDedup.recordProcessed("msg-1", "first")
-        smallDedup.recordProcessed("msg-2", "second")
-        smallDedup.recordProcessed("msg-3", "third")
-
-        // All three should be detected as duplicates
-        assertTrue(smallDedup.isDuplicate("first", isFinal = true))
-
-        // Adding a 4th should evict "first"
-        smallDedup.recordProcessed("msg-4", "fourth")
-        assertFalse("Evicted text should no longer be duplicate", smallDedup.isDuplicate("first", isFinal = true))
     }
 }

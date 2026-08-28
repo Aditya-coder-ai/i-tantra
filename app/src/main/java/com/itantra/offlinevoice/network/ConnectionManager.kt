@@ -12,19 +12,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Manages active transport selection, failover between Wi-Fi Direct and Bluetooth,
+ * Manages active transport selection, failover between LAN/Hotspot, Wi-Fi Direct and Bluetooth,
  * and connection lifecycle state.
  */
 class ConnectionManager(
     val wifiDirectTransport: WiFiDirectTransport,
     val bluetoothTransport: BluetoothTransport,
+    val lanSocketTransport: LanSocketTransport,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
 
     private val _preferredTransport = MutableStateFlow(TransportType.WIFI_DIRECT)
     val preferredTransport: StateFlow<TransportType> = _preferredTransport.asStateFlow()
 
-    private val _activeTransport = MutableStateFlow<Transport>(wifiDirectTransport)
+    private val _activeTransport = MutableStateFlow<Transport>(lanSocketTransport)
     val activeTransport: StateFlow<Transport> = _activeTransport.asStateFlow()
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -37,7 +38,7 @@ class ConnectionManager(
     private var stateSyncJob: Job? = null
 
     init {
-        syncStateWithActiveTransport()
+        syncStateWithAllTransports()
     }
 
     /**
@@ -45,26 +46,39 @@ class ConnectionManager(
      */
     fun setPreferredTransport(type: TransportType) {
         _preferredTransport.value = type
-        val currentTransport = if (type == TransportType.WIFI_DIRECT) wifiDirectTransport else bluetoothTransport
+        val currentTransport = when {
+            type == TransportType.BLUETOOTH -> bluetoothTransport
+            lanSocketTransport.isAvailable -> lanSocketTransport
+            else -> wifiDirectTransport
+        }
         _activeTransport.value = currentTransport
-        syncStateWithActiveTransport()
         Log.i(TAG, "Preferred transport switched to ${type.displayName}")
     }
 
-    private fun syncStateWithActiveTransport() {
+    private fun syncStateWithAllTransports() {
         stateSyncJob?.cancel()
         stateSyncJob = scope.launch {
-            val transport = _activeTransport.value
-            launch {
-                transport.connectionState.collect { state ->
-                    _connectionState.value = state
+            val transports = listOf(lanSocketTransport, wifiDirectTransport, bluetoothTransport)
+            for (t in transports) {
+                launch {
+                    t.connectionState.collect { state ->
+                        if (state == ConnectionState.CONNECTED) {
+                            _activeTransport.value = t
+                            _connectionState.value = ConnectionState.CONNECTED
+                        } else if (_activeTransport.value == t) {
+                            _connectionState.value = state
+                        }
+                    }
                 }
-            }
-            launch {
-                transport.connectedDevice.collect { device ->
-                    _connectedDevice.value = device
-                    if (device != null) {
-                        lastTargetDevice = device
+                launch {
+                    t.connectedDevice.collect { device ->
+                        if (device != null) {
+                            _activeTransport.value = t
+                            _connectedDevice.value = device
+                            lastTargetDevice = device
+                        } else if (_activeTransport.value == t) {
+                            _connectedDevice.value = null
+                        }
                     }
                 }
             }
@@ -76,16 +90,15 @@ class ConnectionManager(
      */
     suspend fun connect(device: VoiceLinkDevice): Boolean = withContext(Dispatchers.IO) {
         lastTargetDevice = device
-        val transport = if (device.transportType == TransportType.WIFI_DIRECT) {
-            wifiDirectTransport
-        } else {
-            bluetoothTransport
+
+        val transport: Transport = when {
+            device.transportType == TransportType.BLUETOOTH -> bluetoothTransport
+            device.nativeAddress.contains(".") -> lanSocketTransport // IP Address (Hotspot/LAN)
+            else -> wifiDirectTransport
         }
 
         _activeTransport.value = transport
-        syncStateWithActiveTransport()
-
-        Log.i(TAG, "Initiating connection to ${device.displayName} via ${device.transportType.displayName}")
+        Log.i(TAG, "Initiating connection to ${device.displayName} via ${transport.javaClass.simpleName} (${device.nativeAddress})")
         return@withContext transport.connect(device)
     }
 
@@ -93,7 +106,9 @@ class ConnectionManager(
      * Disconnects the active transport.
      */
     suspend fun disconnect() = withContext(Dispatchers.IO) {
-        _activeTransport.value.disconnect()
+        lanSocketTransport.disconnect()
+        wifiDirectTransport.disconnect()
+        bluetoothTransport.disconnect()
         _connectionState.value = ConnectionState.DISCONNECTED
         _connectedDevice.value = null
     }

@@ -36,7 +36,10 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
         if (!_isReady.value || text.isBlank()) return false
 
         val locale = getLocaleForCode(languageCode)
-        tts.language = locale
+        val langResult = tts.setLanguage(locale)
+        if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            tts.setLanguage(Locale.getDefault())
+        }
         val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "iTantra_TTS_${System.currentTimeMillis()}")
         return result == TextToSpeech.SUCCESS
     }

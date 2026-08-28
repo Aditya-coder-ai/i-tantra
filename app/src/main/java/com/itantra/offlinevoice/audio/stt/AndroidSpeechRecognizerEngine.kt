@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import java.util.Locale
 
 /**
  * Native on-device Speech-to-Text engine utilizing Android OS built-in SpeechRecognizer.
@@ -26,12 +27,23 @@ class AndroidSpeechRecognizerEngine(private val context: Context) {
     @Volatile private var hasDeliveredResult = false
     private var onResultCallback: ((String) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
+    private var isRetryingWithDefaultLocale = false
 
     val isAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(context)
 
     fun startListening(
         language: STTLanguage,
+        onResult: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        isRetryingWithDefaultLocale = false
+        startListeningInternal(language.localeTag, language.displayName, onResult, onError)
+    }
+
+    private fun startListeningInternal(
+        localeTag: String,
+        displayName: String,
         onResult: (String) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -56,7 +68,7 @@ class AndroidSpeechRecognizerEngine(private val context: Context) {
 
                 rec.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(TAG, "✓ Ready for speech in language: ${language.localeTag}")
+                        Log.d(TAG, "✓ Ready for speech in locale: $localeTag")
                     }
 
                     override fun onBeginningOfSpeech() {
@@ -73,7 +85,7 @@ class AndroidSpeechRecognizerEngine(private val context: Context) {
 
                     override fun onError(error: Int) {
                         isListening = false
-                        Log.w(TAG, "✗ SpeechRecognizer onError: code=$error, partialText='$latestPartialText'")
+                        Log.w(TAG, "✗ SpeechRecognizer onError: code=$error (locale=$localeTag), partialText='$latestPartialText'")
 
                         // If we collected partial results before the error, use them as the result
                         if (latestPartialText.isNotBlank() && !hasDeliveredResult) {
@@ -85,16 +97,30 @@ class AndroidSpeechRecognizerEngine(private val context: Context) {
 
                         if (hasDeliveredResult) return // Already delivered, ignore error
 
+                        // Error 12 (LANGUAGE_NOT_SUPPORTED) or 13 (LANGUAGE_UNAVAILABLE):
+                        // If offline model for requested language is not installed, auto-fallback to default system locale
+                        if ((error == 12 || error == 13) && !isRetryingWithDefaultLocale) {
+                            isRetryingWithDefaultLocale = true
+                            val fallbackTag = Locale.getDefault().toLanguageTag()
+                            Log.w(TAG, "⚠️ Language pack '$localeTag' unavailable offline on this device (error $error). Auto-retrying with system default: $fallbackTag")
+                            startListeningInternal(fallbackTag, "Default (${Locale.getDefault().displayLanguage})", onResult, onError)
+                            return
+                        }
+
                         val message = when (error) {
                             SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
                             SpeechRecognizer.ERROR_CLIENT -> "Speech service client error — try again"
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required"
-                            SpeechRecognizer.ERROR_NETWORK -> "Network required for language: ${language.displayName}"
+                            SpeechRecognizer.ERROR_NETWORK -> "Network or offline speech pack required for: $displayName"
                             SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service timeout"
                             SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized. Hold button and speak clearly."
                             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech service busy — try again"
-                            SpeechRecognizer.ERROR_SERVER -> "Server error"
+                            SpeechRecognizer.ERROR_SERVER -> "Speech server error"
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input detected"
+                            11 -> "Speech service disconnected — try again"
+                            12 -> "Language '$displayName' not supported by on-device recognizer"
+                            13 -> "Language pack for '$displayName' not downloaded offline. Install in Android Settings → Voice → Offline speech recognition."
+                            14 -> "Cannot check speech support on this device"
                             else -> "Speech recognition error ($error)"
                         }
                         onErrorCallback?.invoke(message)
@@ -130,21 +156,16 @@ class AndroidSpeechRecognizerEngine(private val context: Context) {
 
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.localeTag)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language.localeTag)
-                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, language.localeTag)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, localeTag)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-                    // Give the recognizer generous time windows
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
                 }
 
                 rec.startListening(intent)
                 isListening = true
-                Log.i(TAG, "★ SpeechRecognizer.startListening() for language: ${language.localeTag}")
+                Log.i(TAG, "★ SpeechRecognizer.startListening() for locale: $localeTag")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start speech recognizer: ${e.message}", e)
                 isListening = false

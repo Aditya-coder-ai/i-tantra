@@ -174,14 +174,6 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             val identity = securityController.initializeIdentity(localDevName)
             update { copy(localDeviceId = "VL-${identity.deviceId.takeLast(6).uppercase()}") }
 
-            // 2. Pre-pair default mock contacts for backward compatibility
-            try {
-                val demoKey1 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
-                val demoKey2 = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
-                securityController.pairPreSharedDevice("Rescue Team 01", "Rescue Team 01", demoKey1)
-                securityController.pairPreSharedDevice("Medical Unit 04", "Medical Unit 04", demoKey2)
-            } catch (_: Exception) {}
-
             // 3. Start Real Transport Manager
             transportManager.start()
 
@@ -218,12 +210,6 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         scope.launch {
             transportManager.connectedDevice.collect { device ->
                 if (device != null) {
-                    // Auto-establish a trusted session with this peer identity
-                    try {
-                        val peerKey = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
-                        securityController.pairPreSharedDevice(device.deviceId, device.displayName, peerKey)
-                    } catch (_: Exception) {}
-
                     update {
                         copy(
                             connectedDevice = device.displayName,
@@ -275,8 +261,18 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         scope.launch {
             transportManager.incomingEncryptedMessages.collect { encryptedPacket ->
                 try {
-                    Log.i("VoiceLinkController", "★ Incoming Encrypted Message from network: ${encryptedPacket.messageId}")
-                    val decryptedMessage = securityController.decryptIncoming(encryptedPacket)
+                    Log.i("VoiceLinkController", "★ Incoming Encrypted Message from network: ${encryptedPacket.messageId} from ${encryptedPacket.senderId}")
+                    val decryptedMessage = try {
+                        securityController.decryptIncoming(encryptedPacket)
+                    } catch (e: Exception) {
+                        Log.w("VoiceLinkController", "Primary decrypt failed (${e.message}), attempting direct channel decrypt...")
+                        val defaultKey = CryptoManager.deriveDefaultSessionKey()
+                        val nonceBytes = java.util.Base64.getDecoder().decode(encryptedPacket.nonce)
+                        val cipherBytes = encryptedPacket.getCiphertextWithTagBytes()
+                        val aadBytes = encryptedPacket.computeAadBytes()
+                        val rawBytes = CryptoManager.decryptAesGcm(cipherBytes, defaultKey, nonceBytes, aadBytes)
+                        EncryptedMessagePacket.deserializeProcessedMessage(rawBytes)
+                    }
 
                     val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
                     val newMessage = VoiceMessage(
@@ -398,13 +394,8 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
         }
 
         if (isUsingAndroidSpeech) {
-            // Give the SpeechRecognizer a moment to finish processing before
-            // sending the stopListening signal. stopListening() tells the service
-            // "the user stopped speaking, finalize results" — it does NOT cancel.
-            scope.launch {
-                delay(500)
-                androidSpeechRecognizer.stopListening()
-            }
+            // Signal the SpeechRecognizer that the user released the button and speech is complete
+            androidSpeechRecognizer.stopListening()
         } else {
             recorder.stopRecording()
             val rawAudio = recorder.getRawRecordedAudio()
@@ -632,16 +623,9 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
 
             // Real Encryption via SecurityController
             val targetPeer = transportManager.connectedDevice.value
-            val recipientId = targetPeer?.deviceId ?: "Rescue Team 01"
-
+            val recipientId = targetPeer?.deviceId ?: "VL-PEER"
             try {
-                val encryptedPacket = try {
-                    securityController.encryptOutgoing(processed, recipientId)
-                } catch (_: Exception) {
-                    val peerKey = CryptoManager.encodePublicKey(CryptoManager.generateEcKeyPair().public)
-                    securityController.pairPreSharedDevice(recipientId, targetPeer?.displayName ?: recipientId, peerKey)
-                    securityController.encryptOutgoing(processed, recipientId)
-                }
+                val encryptedPacket = securityController.encryptOutgoing(processed, recipientId)
 
                 // Send across real Wi-Fi Direct / Bluetooth transport
                 val sendJob = launch {
@@ -788,6 +772,55 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
                 )
             }
             transportManager.connect(device)
+        }
+    }
+
+    fun connectDirectIp(ip: String) {
+        scope.launch {
+            val cleanIp = ip.trim()
+            if (cleanIp.isBlank()) return@launch
+            update {
+                copy(
+                    linkState = LinkState.CONNECTING,
+                    lastMessage = "Connecting directly to $cleanIp:45892..."
+                )
+            }
+            val dev = VoiceLinkDevice(
+                deviceId = "VL-${cleanIp.replace(".", "").takeLast(6)}",
+                displayName = "VoiceLink Phone ($cleanIp)",
+                transportType = TransportType.WIFI_DIRECT,
+                nativeAddress = cleanIp,
+                signalStrength = 4
+            )
+            val success = transportManager.connect(dev)
+            if (!success) {
+                update {
+                    copy(
+                        linkState = LinkState.FAILED,
+                        lastMessage = "Failed to connect to $cleanIp"
+                    )
+                }
+            }
+        }
+    }
+
+    fun createWifiDirectHostGroup() {
+        scope.launch {
+            update {
+                copy(
+                    linkState = LinkState.CONNECTING,
+                    lastMessage = "Hosting Wi-Fi Direct Group..."
+                )
+            }
+            val success = transportManager.wifiDirectTransport.createDirectGroup()
+            if (!success) {
+                update {
+                    copy(
+                        linkState = LinkState.FAILED,
+                        lastMessage = "Failed to create Wi-Fi Direct Group"
+                    )
+                }
+            }
         }
     }
 

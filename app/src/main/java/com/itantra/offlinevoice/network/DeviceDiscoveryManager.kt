@@ -13,12 +13,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Orchestrates unified peer discovery across Wi-Fi Direct and Bluetooth.
+ * Orchestrates unified peer discovery across Local Hotspot/Wi-Fi, Wi-Fi Direct, and Bluetooth.
  * Merges and deduplicates discovered devices into a single live stream.
  */
 class DeviceDiscoveryManager(
     private val wifiDirectTransport: WiFiDirectTransport,
     private val bluetoothTransport: BluetoothTransport,
+    private val lanSocketTransport: LanSocketTransport,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
 
@@ -32,7 +33,7 @@ class DeviceDiscoveryManager(
     private var discoveryTimeoutJob: Job? = null
 
     /**
-     * Starts active discovery across both Wi-Fi Direct and Bluetooth.
+     * Starts active discovery across all available offline radios.
      */
     suspend fun startDiscovery(
         preferredTransport: TransportType = TransportType.WIFI_DIRECT,
@@ -42,28 +43,46 @@ class DeviceDiscoveryManager(
         deviceMap.clear()
         _discoveredDevices.value = emptyList()
 
-        // 1. Wi-Fi Direct discovery
-        if (wifiDirectTransport.isAvailable) {
+        // 1. Local Hotspot / LAN UDP Beacon Discovery (Fastest & Most Reliable)
+        try {
+            lanSocketTransport.discoverPeers(
+                onPeersFound = { peers ->
+                    updateDeviceMap(peers)
+                },
+                onError = { err ->
+                    Log.d(TAG, "LAN discovery message: $err")
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "LAN discovery exception: ${e.message}")
+        }
+
+        // 2. Wi-Fi Direct discovery
+        try {
             wifiDirectTransport.discoverPeers(
                 onPeersFound = { peers ->
                     updateDeviceMap(peers)
                 },
                 onError = { err ->
-                    Log.w(TAG, "Wi-Fi Direct discovery error: $err")
+                    Log.d(TAG, "Wi-Fi Direct discovery message: $err")
                 }
             )
+        } catch (e: Exception) {
+            Log.w(TAG, "Wi-Fi Direct discovery exception: ${e.message}")
         }
 
-        // 2. Bluetooth discovery (if preferred or Wi-Fi Direct unavailable)
-        if (bluetoothTransport.isAvailable) {
+        // 3. Bluetooth discovery (BLE + Classic)
+        try {
             bluetoothTransport.discoverPeers(
                 onPeersFound = { peers ->
                     updateDeviceMap(peers)
                 },
                 onError = { err ->
-                    Log.w(TAG, "Bluetooth discovery error: $err")
+                    Log.d(TAG, "Bluetooth discovery message: $err")
                 }
             )
+        } catch (e: Exception) {
+            Log.w(TAG, "Bluetooth discovery exception: ${e.message}")
         }
 
         // Discovery timeout timer
@@ -80,15 +99,15 @@ class DeviceDiscoveryManager(
     suspend fun stopDiscovery() = withContext(Dispatchers.Default) {
         discoveryTimeoutJob?.cancel()
         _isDiscovering.value = false
+        lanSocketTransport.stopDiscovery()
         wifiDirectTransport.stopDiscovery()
         bluetoothTransport.stopDiscovery()
-        Log.i(TAG, "Discovery stopped. Found ${deviceMap.size} peers.")
+        Log.i(TAG, "Discovery stopped. Total found: ${deviceMap.size} peers.")
     }
 
     @Synchronized
     private fun updateDeviceMap(newDevices: List<VoiceLinkDevice>) {
         for (device in newDevices) {
-            // Key by native address or deviceId to avoid duplicate entries
             val key = "${device.transportType}_${device.nativeAddress}"
             deviceMap[key] = device
         }

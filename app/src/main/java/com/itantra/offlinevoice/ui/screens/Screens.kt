@@ -77,6 +77,7 @@ import com.itantra.offlinevoice.ui.components.OutlineButton
 import com.itantra.offlinevoice.ui.components.PrimaryButton
 import com.itantra.offlinevoice.ui.components.ProcessingSteps
 import com.itantra.offlinevoice.ui.components.PushToTalkButton
+import com.itantra.offlinevoice.network.LanSocketTransport
 import com.itantra.offlinevoice.ui.components.ScreenPadding
 import com.itantra.offlinevoice.ui.components.SectionLabel
 import com.itantra.offlinevoice.ui.components.StatusPill
@@ -614,7 +615,10 @@ fun ConnectionScreen(controller: MockVoiceLinkController, navigate: (String) -> 
             )
 
             Spacer(Modifier.height(12.dp))
-            PrimaryButton("Search Nearby Devices") { controller.showDevices() }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryButton("Search Nearby Devices", Modifier.weight(1.2f)) { controller.showDevices() }
+                OutlineButton("Host Wi‑Fi Group", Modifier.weight(0.8f)) { controller.createWifiDirectHostGroup() }
+            }
             Spacer(Modifier.height(14.dp))
 
             if (ui.devices.isEmpty()) {
@@ -623,13 +627,19 @@ fun ConnectionScreen(controller: MockVoiceLinkController, navigate: (String) -> 
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
                 ) {
-                    Text(
-                        "No peers detected yet.\nTap 'Search Nearby Devices' or ensure Wi-Fi Direct / Bluetooth is enabled on both phones.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "No peers detected yet.",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "• Ensure Wi-Fi & Bluetooth are turned ON on both phones.\n• Tap 'Search Nearby Devices' on both phones simultaneously.\n• Or tap 'Host Wi‑Fi Group' on one phone and 'Search Nearby Devices' on the other.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             } else {
                 ui.devices.forEach { device ->
@@ -641,7 +651,58 @@ fun ConnectionScreen(controller: MockVoiceLinkController, navigate: (String) -> 
             }
 
             Spacer(Modifier.height(20.dp))
-            SectionLabel("Diagnostics & Fallback")
+            SectionLabel("Hotspot / Direct IP Connect (Fastest)")
+            Spacer(Modifier.height(8.dp))
+
+            val localIp = remember(ui.linkState) { LanSocketTransport.getLocalIpAddress() }
+            var targetIpInput by remember { mutableStateOf(if (localIp != null && localIp.startsWith("192.168.43.") && localIp != "192.168.43.1") "192.168.43.1" else "192.168.43.1") }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("HOTSPOT DIRECT LINK ⚡", style = MaterialTheme.typography.labelMedium, color = Blue, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        Text("Port 45892", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "My Device IP: ${localIp ?: "No active Wi-Fi / Hotspot"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = targetIpInput,
+                            onValueChange = { targetIpInput = it },
+                            label = { Text("Peer Phone IP") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+                        PrimaryButton("CONNECT IP", Modifier.width(135.dp)) {
+                            controller.connectDirectIp(targetIpInput)
+                        }
+                    }
+                    if (localIp != null && localIp != "192.168.43.1") {
+                        Spacer(Modifier.height(8.dp))
+                        OutlineButton("Connect to Hotspot Host (192.168.43.1)") {
+                            controller.connectDirectIp("192.168.43.1")
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Diagnostics & Controls")
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlineButton("Bluetooth Fallback", Modifier.weight(1f)) {

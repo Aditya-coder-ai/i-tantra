@@ -6,11 +6,21 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseData
+import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.BluetoothLeAdvertiser
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.ParcelUuid
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,8 +40,8 @@ import java.io.OutputStream
 import java.util.UUID
 
 /**
- * Production-grade Bluetooth RFCOMM / SPP Transport driver.
- * Serves as secondary fallback when Wi-Fi Direct is disabled or unavailable.
+ * Enhanced Bluetooth transport with BLE Advertising + BLE Scanning + Classic Discovery.
+ * Enables zero-configuration discovery between two Android phones running VoiceLink.
  */
 class BluetoothTransport(
     private val context: Context,
@@ -55,6 +65,12 @@ class BluetoothTransport(
     override val isAvailable: Boolean
         get() = bluetoothAdapter?.isEnabled == true && PermissionHelper.hasBluetoothPermissions(context)
 
+    // BLE Subsystems
+    private var bleAdvertiser: BluetoothLeAdvertiser? = null
+    private var bleScanner: BluetoothLeScanner? = null
+    private var isBleAdvertising = false
+    private var isBleScanning = false
+
     // Sockets & I/O
     private var serverSocket: BluetoothServerSocket? = null
     private var activeSocket: BluetoothSocket? = null
@@ -70,9 +86,11 @@ class BluetoothTransport(
 
     override suspend fun start() = withContext(Dispatchers.IO) {
         startServerListener()
+        startBleAdvertising()
     }
 
     override suspend fun stop() = withContext(Dispatchers.IO) {
+        stopBleAdvertising()
         stopDiscovery()
         disconnect()
     }
@@ -86,19 +104,80 @@ class BluetoothTransport(
 
             try {
                 serverSocket?.close()
-                serverSocket = adapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, VOICELINK_BT_UUID)
-                Log.i(TAG, "Bluetooth RFCOMM Server listening for incoming connections...")
+                // Use Insecure RFCOMM so connection succeeds without requiring OS-level PIN pairing
+                serverSocket = try {
+                    adapter.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, VOICELINK_BT_UUID)
+                } catch (_: Exception) {
+                    adapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, VOICELINK_BT_UUID)
+                }
+                Log.i(TAG, "✓ Bluetooth RFCOMM Server listening on UUID $VOICELINK_BT_UUID...")
 
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
-                    Log.i(TAG, "Bluetooth connection accepted from ${socket.remoteDevice.name ?: socket.remoteDevice.address}")
+                    Log.i(TAG, "★ Bluetooth connection ACCEPTED from ${socket.remoteDevice.name ?: socket.remoteDevice.address}")
                     handleConnectedSocket(socket, isHost = true)
                 }
             } catch (e: Exception) {
                 if (isActive) {
-                    Log.w(TAG, "Bluetooth Server socket closed: ${e.message}")
+                    Log.w(TAG, "Bluetooth Server socket exception: ${e.message}")
                 }
             }
+        }
+    }
+
+    /**
+     * Starts BLE advertising so nearby phones running VoiceLink can discover this device immediately.
+     */
+    @SuppressLint("MissingPermission")
+    fun startBleAdvertising() {
+        val adapter = bluetoothAdapter ?: return
+        if (!adapter.isEnabled || !PermissionHelper.hasBluetoothPermissions(context)) return
+
+        try {
+            bleAdvertiser = adapter.bluetoothLeAdvertiser
+            if (bleAdvertiser == null) {
+                Log.w(TAG, "BLE Advertiser not supported on this hardware")
+                return
+            }
+
+            val settings = AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(true)
+                .setTimeout(0)
+                .build()
+
+            val data = AdvertiseData.Builder()
+                .setIncludeDeviceName(true)
+                .addServiceUuid(ParcelUuid(VOICELINK_BT_UUID))
+                .build()
+
+            bleAdvertiser?.startAdvertising(settings, data, advertiseCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to start BLE advertising: ${e.message}")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopBleAdvertising() {
+        if (isBleAdvertising) {
+            try {
+                bleAdvertiser?.stopAdvertising(advertiseCallback)
+                isBleAdvertising = false
+                Log.d(TAG, "BLE advertising stopped")
+            } catch (_: Exception) {}
+        }
+    }
+
+    private val advertiseCallback = object : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            isBleAdvertising = true
+            Log.i(TAG, "✓ BLE Advertising VoiceLink Service successfully started!")
+        }
+
+        override fun onStartFailure(errorCode: Int) {
+            isBleAdvertising = false
+            Log.w(TAG, "BLE Advertising failed with error code: $errorCode")
         }
     }
 
@@ -114,7 +193,7 @@ class BluetoothTransport(
 
         val adapter = bluetoothAdapter
         if (adapter == null || !adapter.isEnabled) {
-            onError("Bluetooth is turned off")
+            onError("Bluetooth is turned off. Please turn Bluetooth ON.")
             return@withContext
         }
 
@@ -123,13 +202,17 @@ class BluetoothTransport(
         discoveredDevicesMap.clear()
         _connectionState.value = ConnectionState.DISCOVERING
 
-        // 1. Add already bonded (paired) devices first
+        // 1. Immediately ensure BLE Advertising is active
+        startBleAdvertising()
+
+        // 2. Add already bonded (paired) devices first
         try {
             val bonded = adapter.bondedDevices ?: emptySet()
             for (dev in bonded) {
+                val name = dev.name ?: "Paired Device (${dev.address.takeLast(5)})"
                 val vld = VoiceLinkDevice(
                     deviceId = "VL-${dev.address.replace(":", "").takeLast(6).uppercase()}",
-                    displayName = dev.name ?: "Bluetooth Device (${dev.address.takeLast(5)})",
+                    displayName = name,
                     transportType = TransportType.BLUETOOTH,
                     nativeAddress = dev.address,
                     signalStrength = 4,
@@ -141,10 +224,82 @@ class BluetoothTransport(
                 onPeersFoundCallback?.invoke(discoveredDevicesMap.values.toList())
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to read bonded Bluetooth devices: ${e.message}")
+            Log.w(TAG, "Failed to read bonded devices: ${e.message}")
         }
 
-        // 2. Start active discovery for unbonded devices
+        // 3. Start BLE Scanner
+        startBleScan()
+
+        // 4. Start Classic Bluetooth Discovery as supplemental scanner
+        startClassicDiscovery()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startBleScan() {
+        val adapter = bluetoothAdapter ?: return
+        bleScanner = adapter.bluetoothLeScanner
+
+        if (bleScanner != null && !isBleScanning) {
+            try {
+                val filters = listOf(
+                    ScanFilter.Builder().setServiceUuid(ParcelUuid(VOICELINK_BT_UUID)).build()
+                )
+                val settings = ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build()
+
+                bleScanner?.startScan(filters, settings, bleScanCallback)
+                // Also start general scan with null filters if specific UUID filter is restrictive on some OEM chipsets
+                bleScanner?.startScan(bleScanCallback)
+                isBleScanning = true
+                Log.i(TAG, "✓ BLE Scanning for VoiceLink peers started")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start BLE scan: ${e.message}")
+            }
+        }
+    }
+
+    private val bleScanCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            result?.device?.let { dev ->
+                val name = try { dev.name } catch (_: SecurityException) { null }
+                    ?: try { result.scanRecord?.deviceName } catch (_: Exception) { null }
+
+                // Check if this device has our service UUID or has a valid name
+                val uuids = result.scanRecord?.serviceUuids ?: emptyList()
+                val hasVoiceLinkUuid = uuids.any { it.uuid == VOICELINK_BT_UUID }
+
+                if (hasVoiceLinkUuid || !name.isNullOrBlank()) {
+                    val displayName = name ?: "VoiceLink Peer (${dev.address.takeLast(5)})"
+                    val vld = VoiceLinkDevice(
+                        deviceId = "VL-${dev.address.replace(":", "").takeLast(6).uppercase()}",
+                        displayName = displayName,
+                        transportType = TransportType.BLUETOOTH,
+                        nativeAddress = dev.address,
+                        signalStrength = 4,
+                        isPaired = dev.bondState == BluetoothDevice.BOND_BONDED
+                    )
+                    discoveredDevicesMap[dev.address] = vld
+                    _connectionState.value = ConnectionState.DEVICE_FOUND
+                    onPeersFoundCallback?.invoke(discoveredDevicesMap.values.toList())
+                }
+            }
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>?) {
+            results?.forEach { onScanResult(0, it) }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.w(TAG, "BLE Scan failed: $errorCode")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startClassicDiscovery() {
+        val adapter = bluetoothAdapter ?: return
+
         if (!isDiscoveryRegistered) {
             discoveryReceiver = object : BroadcastReceiver() {
                 override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -160,11 +315,11 @@ class BluetoothTransport(
                                 val name = try { device.name } catch (_: SecurityException) { null }
                                 val vld = VoiceLinkDevice(
                                     deviceId = "VL-${device.address.replace(":", "").takeLast(6).uppercase()}",
-                                    displayName = name ?: "Nearby Bluetooth (${device.address.takeLast(5)})",
+                                    displayName = name ?: "Bluetooth (${device.address.takeLast(5)})",
                                     transportType = TransportType.BLUETOOTH,
                                     nativeAddress = device.address,
                                     signalStrength = 3,
-                                    isPaired = false
+                                    isPaired = device.bondState == BluetoothDevice.BOND_BONDED
                                 )
                                 discoveredDevicesMap[device.address] = vld
                                 _connectionState.value = ConnectionState.DEVICE_FOUND
@@ -173,7 +328,7 @@ class BluetoothTransport(
                         }
 
                         BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
-                            Log.d(TAG, "Bluetooth discovery completed")
+                            Log.d(TAG, "Classic Bluetooth discovery cycle finished")
                         }
                     }
                 }
@@ -187,7 +342,7 @@ class BluetoothTransport(
                 context.registerReceiver(discoveryReceiver, filter)
                 isDiscoveryRegistered = true
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to register Bluetooth discovery receiver: ${e.message}", e)
+                Log.e(TAG, "Failed to register classic discovery receiver: ${e.message}", e)
             }
         }
 
@@ -196,15 +351,20 @@ class BluetoothTransport(
                 adapter.cancelDiscovery()
             }
             adapter.startDiscovery()
-            Log.i(TAG, "Bluetooth discovery initiated")
         } catch (e: Exception) {
-            Log.e(TAG, "startDiscovery error: ${e.message}", e)
-            onError("Failed to start Bluetooth scan: ${e.message}")
+            Log.w(TAG, "Classic startDiscovery error: ${e.message}")
         }
     }
 
     @SuppressLint("MissingPermission")
     override suspend fun stopDiscovery() = withContext(Dispatchers.Main) {
+        if (isBleScanning) {
+            try {
+                bleScanner?.stopScan(bleScanCallback)
+                isBleScanning = false
+            } catch (_: Exception) {}
+        }
+
         try {
             bluetoothAdapter?.cancelDiscovery()
         } catch (_: Exception) {}
@@ -225,20 +385,67 @@ class BluetoothTransport(
         _connectionState.value = ConnectionState.CONNECTING
         Log.i(TAG, "Connecting to Bluetooth peer: ${device.displayName} (${device.nativeAddress})")
 
+        // Stop scanning to improve radio bandwidth & avoid connection collision
         try {
-            adapter.cancelDiscovery()
-            val remoteDevice = adapter.getRemoteDevice(device.nativeAddress)
-            val socket = remoteDevice.createRfcommSocketToServiceRecord(VOICELINK_BT_UUID)
+            stopDiscovery()
+        } catch (_: Exception) {}
 
-            socket.connect()
-            Log.i(TAG, "Bluetooth RFCOMM socket connected successfully!")
-            handleConnectedSocket(socket, isHost = false)
-            return@withContext true
+        val remoteDevice = try {
+            adapter.getRemoteDevice(device.nativeAddress)
         } catch (e: Exception) {
-            Log.e(TAG, "Bluetooth connect failed: ${e.message}", e)
+            Log.e(TAG, "Invalid Bluetooth address ${device.nativeAddress}: ${e.message}")
             _connectionState.value = ConnectionState.FAILED
             return@withContext false
         }
+
+        // Strategy 1: Insecure RFCOMM with UUID
+        try {
+            val socket = remoteDevice.createInsecureRfcommSocketToServiceRecord(VOICELINK_BT_UUID)
+            socket.connect()
+            Log.i(TAG, "✓ Bluetooth Strategy 1 (Insecure UUID) connected successfully to ${device.displayName}!")
+            handleConnectedSocket(socket, isHost = false)
+            return@withContext true
+        } catch (e1: Exception) {
+            Log.w(TAG, "Strategy 1 (Insecure UUID) failed: ${e1.message}")
+        }
+
+        // Strategy 2: Secure RFCOMM with UUID
+        try {
+            val socket = remoteDevice.createRfcommSocketToServiceRecord(VOICELINK_BT_UUID)
+            socket.connect()
+            Log.i(TAG, "✓ Bluetooth Strategy 2 (Secure UUID) connected successfully to ${device.displayName}!")
+            handleConnectedSocket(socket, isHost = false)
+            return@withContext true
+        } catch (e2: Exception) {
+            Log.w(TAG, "Strategy 2 (Secure UUID) failed: ${e2.message}")
+        }
+
+        // Strategy 3: Insecure Reflection Channel 1
+        try {
+            val method = remoteDevice.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
+            val socket = method.invoke(remoteDevice, 1) as BluetoothSocket
+            socket.connect()
+            Log.i(TAG, "✓ Bluetooth Strategy 3 (Insecure Reflection Channel 1) connected to ${device.displayName}!")
+            handleConnectedSocket(socket, isHost = false)
+            return@withContext true
+        } catch (e3: Exception) {
+            Log.w(TAG, "Strategy 3 (Insecure Reflection) failed: ${e3.message}")
+        }
+
+        // Strategy 4: Secure Reflection Channel 1
+        try {
+            val method = remoteDevice.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+            val socket = method.invoke(remoteDevice, 1) as BluetoothSocket
+            socket.connect()
+            Log.i(TAG, "✓ Bluetooth Strategy 4 (Secure Reflection Channel 1) connected to ${device.displayName}!")
+            handleConnectedSocket(socket, isHost = false)
+            return@withContext true
+        } catch (e4: Exception) {
+            Log.e(TAG, "All 4 Bluetooth connection strategies failed: ${e4.message}")
+        }
+
+        _connectionState.value = ConnectionState.FAILED
+        return@withContext false
     }
 
     @SuppressLint("MissingPermission")
@@ -260,7 +467,7 @@ class BluetoothTransport(
 
         _connectedDevice.value = peerDevice
         _connectionState.value = ConnectionState.CONNECTED
-        Log.i(TAG, "Bluetooth session active with ${peerDevice.displayName}")
+        Log.i(TAG, "★ Bluetooth session ACTIVE with ${peerDevice.displayName} (${peerDevice.nativeAddress})")
 
         // Start binary framed reader loop
         socketReaderJob?.cancel()

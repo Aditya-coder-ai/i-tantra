@@ -1,16 +1,14 @@
 package com.itantra.offlinevoice.network
 
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class DeliveryManagerTest {
 
     @Test
-    fun testRegisterSentAndHandleAck() = runTest {
+    fun testRegisterSentAndHandleAck() = runBlocking {
         val deliveryManager = DeliveryManager()
         val deferred = deliveryManager.registerSent("msg_abc_123")
 

@@ -42,6 +42,10 @@ class MessageReceiver(
         }
     }
 
+    suspend fun incomingFramesReceived(frame: RawFrame, transport: Transport) {
+        handleIncomingFrame(frame, transport)
+    }
+
     private suspend fun handleIncomingFrame(frame: RawFrame, transport: Transport) {
         when (frame.type) {
             PacketType.DATA -> {

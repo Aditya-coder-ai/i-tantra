@@ -1,30 +1,34 @@
 package com.itantra.offlinevoice
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
+import com.itantra.offlinevoice.network.PermissionHelper
 import com.itantra.offlinevoice.ui.VoiceLinkApp
 import com.itantra.offlinevoice.ui.theme.VoiceLinkTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (!isGranted) {
-            Toast.makeText(this, "Microphone permission is required for voice input", Toast.LENGTH_LONG).show()
+    private val requestMultiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (!allGranted) {
+            val denied = permissions.filter { !it.value }.keys.map { it.substringAfterLast('.') }
+            Toast.makeText(
+                this,
+                "VoiceLink requires permissions for offline radio discovery: ${denied.joinToString()}",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        checkPermissions()
+        checkAndRequestPermissions()
         
         setContent { 
             VoiceLinkTheme { 
@@ -33,9 +37,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkPermissions() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    override fun onResume() {
+        super.onResume()
+        if (!PermissionHelper.hasAllPermissions(this)) {
+            checkAndRequestPermissions()
+        }
+    }
+
+    private fun checkAndRequestPermissions() {
+        val missing = PermissionHelper.getMissingPermissions(this)
+        if (missing.isNotEmpty()) {
+            requestMultiplePermissionsLauncher.launch(missing.toTypedArray())
         }
     }
 }

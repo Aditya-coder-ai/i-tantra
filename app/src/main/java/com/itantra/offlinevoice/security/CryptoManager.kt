@@ -214,6 +214,18 @@ object CryptoManager {
         }
     }
 
+    /**
+     * Derives a canonical 256-bit AES shared network channel key for immediate ad-hoc offline P2P communication.
+     */
+    fun deriveDefaultSessionKey(): ByteArray {
+        return hkdfSha256(
+            ikm = "VoiceLink-Emergency-Channel-Shared-Key-v1".toByteArray(Charsets.UTF_8),
+            salt = "VoiceLink-Default-Salt".toByteArray(Charsets.UTF_8),
+            info = "VoiceLink-P2P-AES-256-Key".toByteArray(Charsets.UTF_8),
+            length = AES_KEY_LENGTH_BYTES
+        )
+    }
+
     // =========================================================================
     // 4. Digital Signatures & Fingerprinting
     // =========================================================================

@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
  * Unified Top-Level Transport Manager Facade for VoiceLink Device-to-Device Communication.
  *
  * Coordinates:
- * - Wi-Fi Direct and Bluetooth Transports
+ * - LAN / Hotspot, Wi-Fi Direct and Bluetooth Transports
  * - Unified Discovery
  * - Connection State Machine & Failover
  * - Framing & Packet Serialization
@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
  */
 class TransportManager(
     private val context: Context,
+    val lanSocketTransport: LanSocketTransport = LanSocketTransport(context),
     val wifiDirectTransport: WiFiDirectTransport = WiFiDirectTransport(context),
     val bluetoothTransport: BluetoothTransport = BluetoothTransport(context),
     val messageQueue: MessageQueue = MessageQueue(),
@@ -37,8 +38,8 @@ class TransportManager(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
 
-    val discoveryManager: DeviceDiscoveryManager = DeviceDiscoveryManager(wifiDirectTransport, bluetoothTransport)
-    val connectionManager: ConnectionManager = ConnectionManager(wifiDirectTransport, bluetoothTransport)
+    val discoveryManager: DeviceDiscoveryManager = DeviceDiscoveryManager(wifiDirectTransport, bluetoothTransport, lanSocketTransport)
+    val connectionManager: ConnectionManager = ConnectionManager(wifiDirectTransport, bluetoothTransport, lanSocketTransport)
     val messageSender: MessageSender = MessageSender(messageQueue, deliveryManager)
     val messageReceiver: MessageReceiver = MessageReceiver(deliveryManager)
 
@@ -57,17 +58,25 @@ class TransportManager(
     private var sessionStartTimeMs: Long = 0L
 
     suspend fun start() = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Starting TransportManager...")
+        Log.i(TAG, "Starting TransportManager across all radio transports...")
+        lanSocketTransport.start()
         wifiDirectTransport.start()
         bluetoothTransport.start()
 
-        // Bind receiver to active transport stream
-        messageReceiver.bindTransport(connectionManager.activeTransport.value)
-
-        // Observe active transport changes
+        // Bind receiver to all active transports so incoming messages are caught from any radio
         scope.launch {
-            connectionManager.activeTransport.collect { transport ->
-                messageReceiver.bindTransport(transport)
+            lanSocketTransport.incomingFrames.collect { frame ->
+                messageReceiver.incomingFramesReceived(frame, lanSocketTransport)
+            }
+        }
+        scope.launch {
+            wifiDirectTransport.incomingFrames.collect { frame ->
+                messageReceiver.incomingFramesReceived(frame, wifiDirectTransport)
+            }
+        }
+        scope.launch {
+            bluetoothTransport.incomingFrames.collect { frame ->
+                messageReceiver.incomingFramesReceived(frame, bluetoothTransport)
             }
         }
 
@@ -90,13 +99,14 @@ class TransportManager(
         metricsJob?.cancel()
         discoveryManager.stopDiscovery()
         messageReceiver.unbind()
+        lanSocketTransport.stop()
         wifiDirectTransport.stop()
         bluetoothTransport.stop()
         Log.i(TAG, "TransportManager stopped")
     }
 
     /**
-     * Discovers nearby VoiceLink peers over Wi-Fi Direct and Bluetooth.
+     * Discovers nearby VoiceLink peers over Hotspot/LAN, Wi-Fi Direct and Bluetooth.
      */
     suspend fun startDiscovery(timeoutMs: Long = 30000L) {
         discoveryManager.startDiscovery(connectionManager.preferredTransport.value, timeoutMs)

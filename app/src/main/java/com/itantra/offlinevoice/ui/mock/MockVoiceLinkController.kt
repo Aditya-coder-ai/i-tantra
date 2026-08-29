@@ -246,6 +246,21 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             }
         }
 
+        // Surface Wi-Fi Direct requirements and framework failures in the app
+        // instead of leaving the user on an indefinite "Searching" state.
+        scope.launch {
+            transportManager.wifiDirectTransport.lastError.collect { error ->
+                if (!error.isNullOrBlank()) {
+                    update {
+                        copy(
+                            linkState = LinkState.FAILED,
+                            lastMessage = error
+                        )
+                    }
+                }
+            }
+        }
+
         // 6. Observe Discovered Peers
         scope.launch {
             transportManager.discoveredDevices.collect { peerList ->
@@ -644,7 +659,8 @@ class MockVoiceLinkController(private val context: Context) : AudioRecorder.List
             // Local Translation for Pocket Translator mode
             // The configured speaking language guides STT, but it can be stale when
             // someone types a message or switches languages mid-conversation.  Do
-            // not let clearly English text be tagged as Hindi and bypass translation.
+            // not let clearly different-script text be tagged with a stale source
+            // language and bypass translation.
             val configuredSourceLang = SupportedLanguage.fromCode(sttLang.code)
             val sourceLang = TextLanguageDetector.detectUnambiguousLanguage(processed.text)
                 ?: configuredSourceLang

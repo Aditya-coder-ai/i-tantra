@@ -216,30 +216,28 @@ class OfflineTranslationEngine(
         lookupPhrasebook(sentence, pair)?.let { return it }
 
         // The phrasebook keeps emergency messages instant and works without a model.
-        // For arbitrary English sentences, use the real on-device Hindi model so
-        // English words are not sent to TTS as a fake Hindi translation.
-        translateEnglishToHindiOnDevice(sentence, pair)?.let { return it }
+        // For arbitrary sentences, use the matching on-device language model when
+        // ML Kit supports both languages in the requested pair.
+        translateOnDevice(sentence, pair)?.let { return it }
 
         return translateSentenceTokens(sentence, pair)
     }
 
     /**
-     * ML Kit stores the language model on the device after its first download.
-     * This intentionally covers the English -> Hindi path used by the live
-     * translator; unsupported pairs retain the built-in offline phrasebook.
+     * ML Kit stores each language model on the device after its first download.
+     * If either side of a pair has no ML Kit model (currently, for example,
+     * Malayalam or Odia), the built-in emergency phrasebook remains the fallback.
      */
-    private suspend fun translateEnglishToHindiOnDevice(text: String, pair: LanguagePair): String? {
-        if (context == null ||
-            pair.source != SupportedLanguage.ENGLISH ||
-            pair.target != SupportedLanguage.HINDI
-        ) {
-            return null
-        }
+    private suspend fun translateOnDevice(text: String, pair: LanguagePair): String? {
+        if (context == null) return null
+
+        val sourceLanguage = TranslateLanguage.fromLanguageTag(pair.source.code) ?: return null
+        val targetLanguage = TranslateLanguage.fromLanguageTag(pair.target.code) ?: return null
 
         val translator = Translation.getClient(
             TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.ENGLISH)
-                .setTargetLanguage(TranslateLanguage.HINDI)
+                .setSourceLanguage(sourceLanguage)
+                .setTargetLanguage(targetLanguage)
                 .build()
         )
 
@@ -254,13 +252,13 @@ class OfflineTranslationEngine(
                             if (continuation.isActive) continuation.resume(translated)
                         }
                         .addOnFailureListener { error ->
-                            Log.w(TAG, "On-device English → Hindi translation failed", error)
+                            Log.w(TAG, "On-device ${pair.key} translation failed", error)
                             translator.close()
                             if (continuation.isActive) continuation.resume(null)
                         }
                 }
                 .addOnFailureListener { error ->
-                    Log.w(TAG, "Hindi translation model is unavailable", error)
+                    Log.w(TAG, "Translation model for ${pair.key} is unavailable", error)
                     translator.close()
                     if (continuation.isActive) continuation.resume(null)
                 }

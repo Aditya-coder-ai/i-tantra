@@ -139,13 +139,13 @@ fun TranslationDebugScreen(controller: MockVoiceLinkController, onBack: () -> Un
         ) {
             item {
                 Text(
-                    "On-Device English → Hindi Translation",
+                    "On-Device Multilingual Translation",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = Blue
                 )
                 Text(
-                    "The English–Hindi model downloads once, then translates on your device. Built-in emergency phrases remain available offline.",
+                    "Each selected language model downloads once, then translates on your device. Built-in emergency phrases remain available offline.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

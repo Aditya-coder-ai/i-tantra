@@ -20,6 +20,14 @@ class TextLanguageDetectorTest {
     }
 
     @Test
+    fun detectsGujaratiTypedText() {
+        assertEquals(
+            SupportedLanguage.GUJARATI,
+            TextLanguageDetector.detectUnambiguousLanguage("મને મદદ જોઈએ")
+        )
+    }
+
+    @Test
     fun ignoresMixedScriptText() {
         assertNull(TextLanguageDetector.detectUnambiguousLanguage("Help चाहिए"))
     }

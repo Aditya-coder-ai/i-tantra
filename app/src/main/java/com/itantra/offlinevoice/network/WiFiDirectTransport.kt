@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.location.LocationManager
 import android.net.NetworkInfo
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
@@ -17,6 +18,7 @@ import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +62,9 @@ class WiFiDirectTransport(
     private val _connectedDevice = MutableStateFlow<VoiceLinkDevice?>(null)
     override val connectedDevice: StateFlow<VoiceLinkDevice?> = _connectedDevice.asStateFlow()
 
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
     private val _incomingFrames = MutableSharedFlow<RawFrame>(extraBufferCapacity = 64)
     override val incomingFrames: Flow<RawFrame> = _incomingFrames.asSharedFlow()
 
@@ -67,6 +72,7 @@ class WiFiDirectTransport(
     private var channel: WifiP2pManager.Channel? = null
     private var receiver: BroadcastReceiver? = null
     private var isReceiverRegistered = false
+    private var isLocalServiceRegistered = false
 
     override val isAvailable: Boolean
         get() = wifiP2pManager != null && PermissionHelper.hasWifiDirectPermissions(context)
@@ -85,10 +91,22 @@ class WiFiDirectTransport(
     init {
         try {
             wifiP2pManager = context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
-            channel = wifiP2pManager?.initialize(context, context.mainLooper, null)
+            initializeChannel()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize WifiP2pManager: ${e.message}", e)
         }
+    }
+
+    private fun initializeChannel() {
+        val manager = wifiP2pManager ?: return
+        channel = manager.initialize(context, context.mainLooper, WifiP2pManager.ChannelListener {
+            // Android invalidates the P2P channel after Wi-Fi resets or a framework
+            // restart. Recreate it so the next discovery/connect attempt can work.
+            Log.w(TAG, "Wi-Fi Direct channel disconnected; reinitializing")
+            channel = manager.initialize(context, context.mainLooper, null)
+            isLocalServiceRegistered = false
+            _connectionState.value = ConnectionState.DISCONNECTED
+        })
     }
 
     override suspend fun start() = withContext(Dispatchers.Main) {
@@ -101,8 +119,13 @@ class WiFiDirectTransport(
                         val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                         val isP2pEnabled = state == WifiP2pManager.WIFI_P2P_STATE_ENABLED
                         Log.d(TAG, "WIFI_P2P_STATE_CHANGED: enabled=$isP2pEnabled")
-                        if (!isP2pEnabled && _connectionState.value == ConnectionState.CONNECTED) {
-                            scope.launch { disconnect() }
+                        if (!isP2pEnabled) {
+                            _lastError.value = "Turn on Wi-Fi to use Wi-Fi Direct"
+                            if (_connectionState.value == ConnectionState.CONNECTED) {
+                                scope.launch { disconnect() }
+                            } else {
+                                _connectionState.value = ConnectionState.FAILED
+                            }
                         }
                     }
 
@@ -148,7 +171,12 @@ class WiFiDirectTransport(
         }
 
         try {
-            context.registerReceiver(receiver, filter)
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
             isReceiverRegistered = true
             Log.i(TAG, "Wi-Fi Direct BroadcastReceiver registered")
             
@@ -176,7 +204,7 @@ class WiFiDirectTransport(
     private fun registerLocalDnsSdService() {
         val mgr = wifiP2pManager ?: return
         val ch = channel ?: return
-        if (!PermissionHelper.hasWifiDirectPermissions(context)) return
+        if (!PermissionHelper.hasWifiDirectPermissions(context) || isLocalServiceRegistered) return
 
         val record = mapOf(
             "service" to "voicelink",
@@ -192,6 +220,7 @@ class WiFiDirectTransport(
         mgr.addLocalService(ch, serviceInfo, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 Log.i(TAG, "✓ Wi-Fi Direct DNS-SD Local Service registered successfully")
+                isLocalServiceRegistered = true
             }
             override fun onFailure(code: Int) {
                 Log.w(TAG, "Wi-Fi Direct addLocalService failed ($code)")
@@ -204,17 +233,22 @@ class WiFiDirectTransport(
         onPeersFound: (List<VoiceLinkDevice>) -> Unit,
         onError: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
+        _lastError.value = null
         if (!PermissionHelper.hasWifiDirectPermissions(context)) {
-            onError("Wi-Fi Direct / Nearby Devices permissions required")
+            reportError("Allow Nearby devices permission to search with Wi-Fi Direct", onError)
+            return@withContext
+        }
+        if (!isLocationModeEnabled()) {
+            reportError("Turn on Location in Android settings to discover Wi-Fi Direct devices", onError)
             return@withContext
         }
 
         val mgr = wifiP2pManager ?: run {
-            onError("Wi-Fi Direct not supported on this device")
+            reportError("Wi-Fi Direct is not supported on this device", onError)
             return@withContext
         }
         val ch = channel ?: run {
-            onError("Wi-Fi Direct channel not initialized")
+            reportError("Wi-Fi Direct is restarting. Try searching again.", onError)
             return@withContext
         }
 
@@ -222,6 +256,11 @@ class WiFiDirectTransport(
         onDiscoveryErrorCallback = onError
         discoveredDevicesMap.clear()
         _connectionState.value = ConnectionState.DISCOVERING
+
+        // The transport starts during app launch, before Android has delivered
+        // runtime permissions. Register the local service here as well, after the
+        // permission check, so peers can discover this phone on the first search.
+        registerLocalDnsSdService()
 
         // 1. Setup DNS-SD Service Discovery listeners
         setupDnsSdDiscovery(mgr, ch)
@@ -240,9 +279,27 @@ class WiFiDirectTransport(
                     else -> "Discovery error ($reasonCode)"
                 }
                 Log.w(TAG, "discoverPeers failed: $errorMsg")
-                onDiscoveryErrorCallback?.invoke(errorMsg)
+                reportError(errorMsg, onDiscoveryErrorCallback)
             }
         })
+    }
+
+    private fun reportError(message: String, callback: ((String) -> Unit)?) {
+        _lastError.value = message
+        _connectionState.value = ConnectionState.FAILED
+        callback?.invoke(message)
+    }
+
+    private fun isLocationModeEnabled(): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            locationManager.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        }
     }
 
     @SuppressLint("MissingPermission")

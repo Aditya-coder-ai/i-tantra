@@ -130,20 +130,14 @@ class LanSocketTransport(
                         val socket = DatagramSocket()
                         socket.broadcast = true
                         
-                        // Send to global broadcast
-                        val packet = DatagramPacket(
-                            beaconData,
-                            beaconData.size,
-                            InetAddress.getByName("255.255.255.255"),
-                            BEACON_PORT
-                        )
-                        socket.send(packet)
-
-                        // Also send to common hotspot subnet broadcast (192.168.43.255)
-                        try {
-                            val hotspotBroadcast = InetAddress.getByName("192.168.43.255")
-                            socket.send(DatagramPacket(beaconData, beaconData.size, hotspotBroadcast, BEACON_PORT))
-                        } catch (_: Exception) {}
+                        // Android hotspot subnets vary by vendor. Broadcast to the
+                        // active interface's real subnet as well as the global
+                        // broadcast address, instead of assuming 192.168.43.x.
+                        val targets = (getBroadcastAddresses() + InetAddress.getByName("255.255.255.255"))
+                            .distinctBy { it.hostAddress }
+                        for (target in targets) {
+                            socket.send(DatagramPacket(beaconData, beaconData.size, target, BEACON_PORT))
+                        }
 
                         socket.close()
                     }
@@ -364,20 +358,51 @@ class LanSocketTransport(
         fun getLocalIpAddress(): String? {
             try {
                 val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-                for (intf in interfaces) {
-                    if (intf.isLoopback || !intf.isUp) continue
-                    val addrs = intf.inetAddresses
-                    for (addr in addrs) {
-                        if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
-                            val ip = addr.hostAddress
-                            if (!ip.isNullOrBlank() && ip != "127.0.0.1") {
-                                return ip
-                            }
+                val activeInterfaces = mutableListOf<NetworkInterface>()
+                while (interfaces.hasMoreElements()) {
+                    val networkInterface = interfaces.nextElement()
+                    if (!networkInterface.isLoopback && networkInterface.isUp) {
+                        activeInterfaces += networkInterface
+                    }
+                }
+                val wifiFirst = activeInterfaces.sortedByDescending { intf ->
+                    val name = intf.name.lowercase()
+                    name.contains("wlan") || name.contains("wifi") || name.contains("p2p") || name.contains("ap")
+                }
+
+                for (intf in wifiFirst) {
+                    val addresses = intf.inetAddresses
+                    while (addresses.hasMoreElements()) {
+                        val address = addresses.nextElement()
+                        if (address is java.net.Inet4Address &&
+                            !address.isLoopbackAddress &&
+                            address.isSiteLocalAddress
+                        ) {
+                            return address.hostAddress
                         }
                     }
                 }
             } catch (_: Exception) {}
             return null
+        }
+
+        /** Returns broadcast addresses for every active Wi-Fi, hotspot, or P2P interface. */
+        fun getBroadcastAddresses(): List<InetAddress> = try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+            buildList {
+                while (interfaces.hasMoreElements()) {
+                    val networkInterface = interfaces.nextElement()
+                    if (!networkInterface.isLoopback && networkInterface.isUp) {
+                        addAll(
+                            networkInterface.interfaceAddresses
+                                .mapNotNull { it.broadcast }
+                                .filterIsInstance<java.net.Inet4Address>()
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 }

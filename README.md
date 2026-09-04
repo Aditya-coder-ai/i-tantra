@@ -1,4 +1,4 @@
-# Offline Voice Input — Part 1 & Part 2 (Audio Capture + VAD)
+# Talkmitra — Offline Voice Input & Local Mesh Communication
 
 This Android project implements offline voice input and real-time Voice Activity Detection (VAD). It captures 16 kHz, mono, signed 16-bit PCM through Android's `AudioRecord` and segments incoming audio into discrete spoken utterances without any cloud or network dependency.
 

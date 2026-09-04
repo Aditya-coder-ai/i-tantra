@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "OfflineVoice"
+rootProject.name = "Talkmitra"
 include(":app")

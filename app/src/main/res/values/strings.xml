@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">i-tantra</string>
+    <string name="app_name">Talkmitra</string>
     <string name="status_idle">Idle — microphone is not active</string>
     <string name="status_recording">Recording — microphone is active</string>
     <string name="status_paused">Paused</string>

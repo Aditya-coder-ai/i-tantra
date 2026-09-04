@@ -13,7 +13,7 @@ Models are NOT bundled in the APK — they must be downloaded and installed sepa
 Models must be placed in the app's internal storage:
 
 ```
-/data/data/com.itantra.offlinevoice/files/models/tts/
+/data/data/com.talkmitra.offlinevoice/files/models/tts/
 ├── espeak-ng-data/          ← Shared phonemiser data (required for all Piper models)
 │   ├── ...
 ├── hi/                      ← Hindi
@@ -157,20 +157,20 @@ This adds the required ONNX metadata fields (`model_type`, `language`, `voice`, 
 
 ```bash
 # Create the directory structure
-adb shell mkdir -p /data/data/com.itantra.offlinevoice/files/models/tts/hi
-adb shell mkdir -p /data/data/com.itantra.offlinevoice/files/models/tts/en
-adb shell mkdir -p /data/data/com.itantra.offlinevoice/files/models/tts/espeak-ng-data
+adb shell mkdir -p /data/data/com.talkmitra.offlinevoice/files/models/tts/hi
+adb shell mkdir -p /data/data/com.talkmitra.offlinevoice/files/models/tts/en
+adb shell mkdir -p /data/data/com.talkmitra.offlinevoice/files/models/tts/espeak-ng-data
 
 # Push shared eSpeak data
-adb push espeak-ng-data/ /data/data/com.itantra.offlinevoice/files/models/tts/
+adb push espeak-ng-data/ /data/data/com.talkmitra.offlinevoice/files/models/tts/
 
 # Push Hindi model
-adb push model.onnx /data/data/com.itantra.offlinevoice/files/models/tts/hi/
-adb push tokens.txt /data/data/com.itantra.offlinevoice/files/models/tts/hi/
+adb push model.onnx /data/data/com.talkmitra.offlinevoice/files/models/tts/hi/
+adb push tokens.txt /data/data/com.talkmitra.offlinevoice/files/models/tts/hi/
 
 # Push English model
-adb push model.onnx /data/data/com.itantra.offlinevoice/files/models/tts/en/
-adb push tokens.txt /data/data/com.itantra.offlinevoice/files/models/tts/en/
+adb push model.onnx /data/data/com.talkmitra.offlinevoice/files/models/tts/en/
+adb push tokens.txt /data/data/com.talkmitra.offlinevoice/files/models/tts/en/
 ```
 
 ### Via File Manager
@@ -206,7 +206,7 @@ adb push tokens.txt /data/data/com.itantra.offlinevoice/files/models/tts/en/
 - Verify directory name matches language code exactly (`hi`, `en`, `te`, etc.)
 - Check that both `model.onnx` AND `tokens.txt` exist in the language directory
 - Check that `espeak-ng-data/` exists at the models root
-- Verify file permissions: `adb shell ls -la /data/data/com.itantra.offlinevoice/files/models/tts/hi/`
+- Verify file permissions: `adb shell ls -la /data/data/com.talkmitra.offlinevoice/files/models/tts/hi/`
 
 ### Native library not found
 

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.itantra.offlinevoice"
+    namespace = "com.talkmitra.offlinevoice"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.itantra.offlinevoice"
+        applicationId = "com.talkmitra.offlinevoice"
         minSdk = 23
         targetSdk = 35
         versionCode = 1
